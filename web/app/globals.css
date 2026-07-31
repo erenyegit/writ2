@@ -1,0 +1,179 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-ink-950 font-sans text-[14px] leading-relaxed text-steel-300 antialiased;
+}
+
+::selection {
+  @apply bg-arc-500/25 text-char;
+}
+
+/* ---------------------------------------------------------------- panels */
+
+.panel {
+  @apply rounded-xl border border-inkline bg-ink-900 shadow-soft;
+}
+
+.panel-inset {
+  @apply rounded-lg border border-hairline bg-ink-850;
+}
+
+/* ---------------------------------------------------------------- type */
+
+.micro {
+  /* Arc-style {MICRO LABEL} */
+  @apply font-mono text-[10.5px] font-semibold uppercase tracking-[0.12em] text-steel-400;
+}
+
+.micro-amber {
+  @apply micro text-amber;
+}
+
+.display {
+  @apply font-display font-bold tracking-tight text-char;
+}
+
+.num {
+  @apply font-mono tabular-nums;
+}
+
+/* ---------------------------------------------------------------- buttons */
+
+.btn {
+  @apply inline-flex h-9 items-center justify-center gap-2 rounded-full px-5 font-mono text-[12px] font-semibold uppercase tracking-wider transition disabled:cursor-not-allowed disabled:opacity-35;
+}
+
+.btn-primary {
+  @apply btn bg-arc-500 text-white shadow-soft hover:bg-arc-600;
+}
+
+.btn-ghost {
+  @apply btn border border-inkline bg-ink-900 text-char shadow-soft hover:bg-ink-850;
+}
+
+.btn-lg {
+  @apply h-12 px-7 text-[13px];
+}
+
+/* ---------------------------------------------------------------- fields */
+
+.field {
+  @apply h-10 w-full rounded-lg border border-inkline bg-ink-900 px-3 font-mono text-[13px] text-char outline-none transition focus:border-arc-500;
+}
+
+.label {
+  @apply micro mb-2 block;
+}
+
+/* ---------------------------------------------------------------- table */
+
+.trow {
+  @apply grid items-center gap-3 border-b border-hairline px-4 py-3 last:border-b-0;
+}
+
+.thead {
+  @apply micro border-b border-hairline bg-ink-850 px-4 py-2.5;
+}
+
+/* ---------------------------------------------------------------- misc */
+
+summary {
+  list-style: none;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+.dot {
+  @apply inline-block h-1.5 w-1.5 rounded-full;
+}
+
+.tick {
+  @apply text-yield;
+}
+
+/* segmented control */
+.seg {
+  @apply grid grid-cols-2 gap-1 overflow-hidden rounded-full border border-hairline bg-ink-850 p-1;
+}
+
+.seg > button {
+  @apply h-9 rounded-full font-mono text-[12px] font-semibold uppercase tracking-wider text-steel-400 transition;
+}
+
+.seg > button[data-active="true"] {
+  @apply bg-char text-white shadow-soft;
+}
+
+/* quote ttl bar */
+@keyframes drain {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+
+.ttl-bar {
+  @apply h-0.5 rounded-full bg-arc-500;
+  animation: drain 60s linear forwards;
+}
+
+/* hero interactive range (invisible native input over custom bar) */
+.hero-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  pointer-events: none;
+  margin: 0;
+  height: 100%;
+  width: 100%;
+}
+
+.hero-range::-webkit-slider-runnable-track {
+  background: transparent;
+  border: none;
+}
+
+.hero-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 9999px;
+  background: transparent;
+  border: none;
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.hero-range::-moz-range-track {
+  background: transparent;
+  border: none;
+}
+
+.hero-range::-moz-range-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: 9999px;
+  background: transparent;
+  border: none;
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.hero-range:focus-visible {
+  outline: none;
+}
+
+.hero-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(61, 94, 224, 0.45);
+}
+
+.hero-range:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 3px rgba(61, 94, 224, 0.45);
+}

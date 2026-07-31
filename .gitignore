@@ -1,0 +1,23 @@
+# deps
+node_modules/
+
+# foundry
+out/
+cache/
+broadcast/
+
+# env & secrets
+.env
+.env.local
+.env*.local
+
+# next.js
+.next/
+next-env.d.ts
+
+# build
+dist/
+
+# misc
+*.log
+.DS_Store

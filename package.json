@@ -1,0 +1,9 @@
+{
+  "name": "writ-giwa",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "pricing:dev": "pnpm --filter @writ-giwa/pricing dev",
+    "web:dev": "pnpm --filter @writ-giwa/web dev"
+  }
+}
