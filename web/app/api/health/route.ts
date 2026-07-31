@@ -6,5 +6,5 @@ import { quoterAddress } from "@/lib/desk/quote";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return NextResponse.json({ ok: true, quoter: quoterAddress, chainId: deskConfig.chainId });
+  return NextResponse.json({ ok: true, quoter: quoterAddress(), chainId: deskConfig.chainId });
 }

@@ -6,8 +6,15 @@ import { deskConfig } from "./config";
 
 const YEAR_SEC = 365 * 24 * 3600;
 
-const account = privateKeyToAccount(deskConfig.quoterPrivateKey);
-export const quoterAddress = account.address;
+/** Derived on first use, not at module load: the build should never need to
+ *  resolve a secret just to collect route metadata. */
+let cachedAccount: ReturnType<typeof privateKeyToAccount> | undefined;
+function deskAccount() {
+  cachedAccount ??= privateKeyToAccount(deskConfig.quoterPrivateKey);
+  return cachedAccount;
+}
+
+export const quoterAddress = () => deskAccount().address;
 
 /** EIP-712 domain — must match WritOptions' EIP712("WritOptions", "1"). */
 const domain = {
@@ -83,7 +90,7 @@ export async function buildSignedQuote(req: QuoteRequest, spot: number) {
     nonce: BigInt("0x" + randomBytes(32).toString("hex")),
   };
 
-  const signature = await account.signTypedData({
+  const signature = await deskAccount().signTypedData({
     domain,
     types,
     primaryType: "Quote",
@@ -111,7 +118,7 @@ export async function buildSignedQuote(req: QuoteRequest, spot: number) {
       deskBidUsd: bidUsd,
       premiumUsdc: quote.premium.toString(),
       collateralUsdc: collateral.toString(),
-      quoter: quoterAddress,
+      quoter: quoterAddress(),
     },
   };
 }
