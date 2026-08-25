@@ -3,6 +3,7 @@ import { privateKeyToAccount } from "viem/accounts";
 
 import { bsCappedCall, bsPut } from "./bs";
 import { deskConfig } from "./config";
+import { deskSpread, impliedVol } from "./surface";
 
 const YEAR_SEC = 365 * 24 * 3600;
 
@@ -59,12 +60,23 @@ export async function buildSignedQuote(req: QuoteRequest, spot: number) {
     throw new Error("calls require cap > strike");
   }
 
-  // Fair value per 1 BTC, then desk bid (desk buys volatility below fair).
+  // Vol comes from the surface, so a far strike and a near one are not priced
+  // off the same number. A capped call is two strikes, so it takes two vols.
+  const iv = impliedVol(spot, req.strikeUsd, T);
   const fairPerBtc = req.isPut
-    ? bsPut(spot, req.strikeUsd, T, deskConfig.iv, deskConfig.riskFreeRate)
-    : bsCappedCall(spot, req.strikeUsd, req.capUsd!, T, deskConfig.iv, deskConfig.riskFreeRate);
+    ? bsPut(spot, req.strikeUsd, T, iv, deskConfig.riskFreeRate)
+    : bsCappedCall(
+        spot,
+        req.strikeUsd,
+        req.capUsd!,
+        T,
+        iv,
+        impliedVol(spot, req.capUsd!, T),
+        deskConfig.riskFreeRate,
+      );
+  const spread = deskSpread(spot, req.strikeUsd, T);
   const fairUsd = fairPerBtc * req.qtyBtc;
-  const bidUsd = fairUsd * (1 - deskConfig.spread);
+  const bidUsd = fairUsd * (1 - spread);
 
   const premium = BigInt(Math.floor(bidUsd * 1e6)); // USDC 1e6
   if (premium <= 0n) throw new Error("premium rounds to zero — size too small");
@@ -112,12 +124,19 @@ export async function buildSignedQuote(req: QuoteRequest, spot: number) {
     signature,
     meta: {
       spotUsd: spot,
-      ivAnnualized: deskConfig.iv,
+      ivAnnualized: iv,
+      deskSpread: spread,
       tenorYears: T,
       fairValueUsd: fairUsd,
       deskBidUsd: bidUsd,
       premiumUsdc: quote.premium.toString(),
       collateralUsdc: collateral.toString(),
+      /**
+       * The premium as an annualized rate on the capital it locks up. This is
+       * the number a writer actually compares between strikes and tenors; a
+       * raw premium says nothing without the tenor beside it.
+       */
+      aprPct: (Number(premium) / Number(collateral) / T) * 100,
       quoter: quoterAddress(),
     },
   };

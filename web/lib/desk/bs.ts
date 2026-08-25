@@ -38,14 +38,20 @@ export function bsPut(S: number, K: number, T: number, sigma: number, r = 0): nu
   return K * Math.exp(-r * T) * normCdf(-d2) - S * normCdf(-d1);
 }
 
-/** A capped call (call spread): long call at K, short call at cap. */
+/**
+ * A capped call (call spread): long call at K, short call at cap.
+ *
+ * The two legs sit at different strikes, so on a skewed surface they carry
+ * different vols. Pricing both off one number misprices the spread itself.
+ */
 export function bsCappedCall(
   S: number,
   K: number,
   cap: number,
   T: number,
-  sigma: number,
+  sigmaK: number,
+  sigmaCap: number,
   r = 0,
 ): number {
-  return bsCall(S, K, T, sigma, r) - bsCall(S, cap, T, sigma, r);
+  return bsCall(S, K, T, sigmaK, r) - bsCall(S, cap, T, sigmaCap, r);
 }

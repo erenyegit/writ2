@@ -1,10 +1,16 @@
 /** Desk endpoints are served by this app's own /api routes (Vercel functions). */
 
+export interface AprRange {
+  minPct: number;
+  maxPct: number;
+}
+
 export interface Market {
   spotUsd: number;
   ivAnnualized: number;
   strikes: number[];
   expiries: number[];
+  apr: { put: AprRange | null; call: AprRange | null; refExpiry: number; refTenorDays: number };
 }
 
 export interface SignedQuote {
@@ -28,6 +34,8 @@ export interface SignedQuote {
     deskBidUsd: number;
     premiumUsdc: string;
     collateralUsdc: string;
+    aprPct: number;
+    deskSpread: number;
     quoter: `0x${string}`;
   };
 }

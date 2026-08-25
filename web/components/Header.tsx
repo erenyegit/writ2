@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 
@@ -21,6 +22,24 @@ export function Header() {
   const { switchChain } = useSwitchChain();
 
   const wrongChain = isConnected && chainId !== giwaSepolia.id;
+
+  // wagmi discovers every EIP-6963 wallet in the browser as its own connector.
+  // Picking connectors[0] silently locked out anyone whose wallet was not first.
+  const [picking, setPicking] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!picking) return;
+    const close = (e: MouseEvent) => {
+      if (!pickerRef.current?.contains(e.target as Node)) setPicking(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [picking]);
+
+  const onConnect = () => {
+    if (connectors.length === 1) connect({ connector: connectors[0] });
+    else setPicking((v) => !v);
+  };
 
   return (
     <header className="sticky top-0 z-20 border-b border-inkline bg-ink-900/95 backdrop-blur">
@@ -52,13 +71,33 @@ export function Header() {
             <span className="micro !text-steel-400">giwa sepolia</span>
           </span>
           {!isConnected ? (
-            <button
-              className="btn-primary"
-              disabled={isPending}
-              onClick={() => connect({ connector: connectors[0] })}
-            >
-              {isPending ? "connecting…" : "connect"}
-            </button>
+            <div className="relative" ref={pickerRef}>
+              <button className="btn-primary" disabled={isPending} onClick={onConnect}>
+                {isPending ? "connecting…" : "connect"}
+              </button>
+              {picking && (
+                <div className="absolute right-0 z-30 mt-2 w-56 overflow-hidden rounded-md border border-hairline bg-ink-900 shadow-soft">
+                  {connectors.length === 0 && (
+                    <p className="px-3 py-3 text-[12px] leading-relaxed text-steel-400">
+                      no wallet detected. install a browser wallet, or open this page inside your
+                      wallet&apos;s own browser.
+                    </p>
+                  )}
+                  {connectors.map((c) => (
+                    <button
+                      key={c.uid}
+                      className="block w-full px-3 py-2.5 text-left text-[12px] text-steel-300 transition hover:bg-ink-850 hover:text-char"
+                      onClick={() => {
+                        setPicking(false);
+                        connect({ connector: c });
+                      }}
+                    >
+                      {c.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           ) : wrongChain ? (
             <button className="btn-primary" onClick={() => switchChain({ chainId: giwaSepolia.id })}>
               switch to giwa

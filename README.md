@@ -37,11 +37,18 @@ Premiums are quoted off-chain by a Black-Scholes desk engine, signed as EIP-712 
 data, and verified on-chain — the desk can only set premiums, never touch collateral
 beyond the signed trade.
 
+Vol comes from a surface rather than a single number: short tenors sit above long
+ones, and strikes below spot sit above strikes above it. The desk's spread widens
+with tenor and with distance from spot, where the model is least trustworthy. Both
+are parametric and env-tunable — a model, not a market — but a flat vol overpays
+wherever the market trades under it and quotes nothing wherever it trades over,
+and the writer picks which of those two the desk is wrong about.
+
 ## Repository layout
 
 ```
 contracts/   Foundry — WritOptions core, PythAdapter, TestUSDC (faucet-backed
-             settlement token; GIWA has no canonical stablecoin yet), 36 tests
+             settlement token; GIWA has no canonical stablecoin yet), 43 tests
 web/         Next.js app: trade + positions UI, plus the desk itself served as
              /api routes (Black-Scholes quoting + EIP-712 signing) — one deploy
 pricing/     settlement keeper script + optional standalone desk service
@@ -87,6 +94,10 @@ The script deploys TestUSDC + PythAdapter + WritOptions and seeds the desk with 
 deployer's first faucet claim. Then put the deployed addresses into `web/.env.local`
 (`NEXT_PUBLIC_CORE_ADDRESS`, `NEXT_PUBLIC_USDC_ADDRESS`, `CORE_ADDRESS`) along with
 `QUOTER_PRIVATE_KEY`.
+
+`QUOTER_PRIVATE_KEY` is required when `NODE_ENV=production`: the desk refuses to
+start rather than fall back to the published dev key, which would let anyone forge
+a quote the contract accepts.
 
 Test USDC is self-serve: the trade page has a **claim** button (2,000 per 8h per
 address), so anyone can try the demo without asking for funds.

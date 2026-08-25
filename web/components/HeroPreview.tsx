@@ -4,21 +4,20 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { bsCappedCall, bsPut } from "@/lib/desk/bs";
+import { deskSpread, impliedVol } from "@/lib/desk/surface";
 import { fmtUsd } from "@/lib/format";
 
 /**
  * Interactive position preview for the landing hero.
  *
  * Prices with the same Black-Scholes model the desk uses (client-side,
- * mirroring the desk's default IV/spread) so slider moves update instantly.
+ * off the same surface the desk quotes from) so slider moves update instantly.
  * Values are indicative — the module is labelled accordingly; real signed
  * quotes only exist on the trade desk.
  */
 
 const SIZE_BTC = 0.01;
 // Mirrors the desk's default pricing knobs (indicative preview only).
-const IV = 0.55;
-const SPREAD = 0.1;
 const STEP = 500;
 const MIN_GAP = 1000;
 
@@ -53,11 +52,22 @@ export function HeroPreview({ spot }: { spot: number | null }) {
   const T = days / 365;
   const premium = useMemo(() => {
     if (!spot) return null;
+    // Same surface the desk quotes from, so the preview and the real ticket
+    // do not disagree about what a strike is worth.
     if (tab === "put" && putStrike) {
-      return Math.max(bsPut(spot, putStrike, T, IV) * SIZE_BTC * (1 - SPREAD), 0);
+      const fair = bsPut(spot, putStrike, T, impliedVol(spot, putStrike, T));
+      return Math.max(fair * SIZE_BTC * (1 - deskSpread(spot, putStrike, T)), 0);
     }
     if (tab === "call" && callStrike && cap && cap > callStrike) {
-      return Math.max(bsCappedCall(spot, callStrike, cap, T, IV) * SIZE_BTC * (1 - SPREAD), 0);
+      const fair = bsCappedCall(
+        spot,
+        callStrike,
+        cap,
+        T,
+        impliedVol(spot, callStrike, T),
+        impliedVol(spot, cap, T),
+      );
+      return Math.max(fair * SIZE_BTC * (1 - deskSpread(spot, callStrike, T)), 0);
     }
     return null;
   }, [spot, tab, putStrike, callStrike, cap, T]);

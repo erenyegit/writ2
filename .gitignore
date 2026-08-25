@@ -21,3 +21,6 @@ dist/
 # misc
 *.log
 .DS_Store
+
+# typescript incremental build cache
+*.tsbuildinfo

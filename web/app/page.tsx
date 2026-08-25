@@ -129,7 +129,7 @@ export default function EarnPage() {
           <span>strategy</span>
           <span>outcome</span>
           <span>max collateral</span>
-          <span>premium</span>
+          <span>apr on collateral · 7d</span>
           <span />
         </div>
 
@@ -160,7 +160,17 @@ export default function EarnPage() {
                 {p.coll}
               </span>
             </span>
-            <span className="num tick">paid upfront in usdc</span>
+            <span>
+              <span className="num tick">
+                {(() => {
+                  const r = p.side === "put" ? market?.apr.put : market?.apr.call;
+                  return r ? `${r.minPct.toFixed(0)}% – ${r.maxPct.toFixed(0)}%` : "—";
+                })()}
+              </span>
+              {/* The base belongs beside the rate: a call spread locks only its
+                  width, so the same premium reads as a much larger rate. */}
+              <span className="block text-[11px] text-steel-500">on {p.coll}</span>
+            </span>
             <Link href={`/trade?side=${p.side}`} className="btn-ghost">
               sell {p.side}s
             </Link>

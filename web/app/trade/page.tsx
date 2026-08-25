@@ -49,6 +49,19 @@ export default function TradePage() {
     if (Number.isFinite(dy) && dy > 0) urlParams.current.days = dy;
   }, []);
 
+  const spot = market?.spotUsd;
+
+  /**
+   * Only out-of-the-money strikes belong on an income ticket. A put struck
+   * above spot is already in the money: the writer is not being paid to wait
+   * for a price, they are being paid to take a loss that has already happened.
+   * The annualized figure makes those strikes look spectacular, which is
+   * exactly why they should not be on the ladder.
+   */
+  const ladder = (market?.strikes ?? []).filter((k) =>
+    !spot ? true : side === "put" ? k <= spot : k >= spot,
+  );
+
   // ------------------------------------------------------------ market data
 
   useEffect(() => {
@@ -80,6 +93,13 @@ export default function TradePage() {
       clearInterval(t);
     };
   }, []);
+
+  // Switching side can leave a strike that is now in the money selected.
+  useEffect(() => {
+    if (!spot || !strike || ladder.length === 0) return;
+    if (!ladder.includes(strike)) setStrike(nearestStrike(market!));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [side, spot, ladder.length]);
 
   useEffect(() => {
     if (side !== "call" || !market || !strike) return;
@@ -215,7 +235,6 @@ export default function TradePage() {
     return () => clearInterval(t);
   }, []);
 
-  const spot = market?.spotUsd;
   const premiumUsd = quote ? Number(quote.quote.premium) / 1e6 : null;
   const breakeven =
     quote && strike && premiumUsd !== null && qtyNum > 0
@@ -289,7 +308,7 @@ export default function TradePage() {
             <span className="label">strike</span>
             <div className="overflow-hidden rounded-md border border-hairline">
               <div className="grid grid-cols-3 border-b border-hairline bg-ink-900 sm:grid-cols-5">
-                {market?.strikes.slice(0, 10).map((s) => {
+                {ladder.slice(0, 10).map((s) => {
                   const isAtm = spot && nearestStrike(market!) === s;
                   const active = strike === s;
                   return (
@@ -419,6 +438,11 @@ export default function TradePage() {
 
                 <div className="panel-inset divide-y divide-[rgba(20,23,30,0.12)] text-[12px]">
                   <Row k="max profit" v={fmtUsdc(premiumBig)} tone="good" />
+                  <Row
+                    k="annualized on collateral"
+                    v={`${quote.meta.aprPct.toFixed(1)}%`}
+                    tone="good"
+                  />
                   <Row k="max net loss" v={fmtUsdc(maxNetLoss)} tone="bad" />
                   {breakeven !== null && <Row k="breakeven at expiry" v={fmtUsd(breakeven, 0)} />}
                   {side === "call" && cap !== null && (
@@ -435,6 +459,10 @@ export default function TradePage() {
                 <div className="panel-inset divide-y divide-[rgba(20,23,30,0.12)] text-[12px]">
                   <Row k="collateral to lock" v={fmtUsdc(collateral)} />
                   <Row k="black-scholes estimate" v={fmtUsd(quote.meta.fairValueUsd)} />
+                  <Row
+                    k="implied vol at this strike"
+                    v={`${(quote.meta.ivAnnualized * 100).toFixed(1)}%`}
+                  />
                   <Row k="quote expires" v={fmtTs(Number(quote.quote.quoteDeadline))} />
                   {usdcBalance !== undefined && <Row k="your usdc" v={fmtUsdc(usdcBalance)} />}
                 </div>
@@ -478,6 +506,7 @@ export default function TradePage() {
                   <div className="panel-inset border-arc-500/30 text-[12px]">
                     <div className="micro border-b border-hairline px-3 py-2">review & sign</div>
                     <Row k="receive now" v={fmtUsdc(premiumBig)} tone="good" />
+                    <Row k="annualized" v={`${quote.meta.aprPct.toFixed(1)}%`} tone="good" />
                     <Row k="lock as collateral" v={fmtUsdc(collateral)} />
                     <Row k="max net loss" v={fmtUsdc(maxNetLoss)} tone="bad" />
                     <Row k="expiry" v={fmtTs(Number(quote.quote.expiry))} />
