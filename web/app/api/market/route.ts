@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { bsCappedCall, bsPut } from "@/lib/desk/bs";
+import { bsCall, bsPut } from "@/lib/desk/bs";
 import { atmVol, deskSpread, impliedVol } from "@/lib/desk/surface";
 import { fetchSpot } from "@/lib/desk/hermes";
 
@@ -38,12 +38,12 @@ export async function GET() {
     // this because a premium alone is not comparable across strikes or tenors.
     const aprAt = (strike: number, T: number, isPut: boolean) => {
       const iv = impliedVol(spot, strike, T);
-      const collateralPerBtc = isPut ? strike : (strike * 1.05 - strike);
-      const fair = isPut
-        ? bsPut(spot, strike, T, iv)
-        : bsCappedCall(spot, strike, strike * 1.05, T, iv, impliedVol(spot, strike * 1.05, T));
+      const fair = isPut ? bsPut(spot, strike, T, iv) : bsCall(spot, strike, T, iv);
       const bid = fair * (1 - deskSpread(spot, strike, T));
-      return (bid / collateralPerBtc / T) * 100;
+      // Both products commit full notional: a put locks the strike in cash, a
+      // covered call locks one unit of the underlying. So the rates compare.
+      const committedPerBtc = isPut ? strike : spot;
+      return (bid / committedPerBtc / T) * 100;
     };
 
     // Quoted at one reference tenor rather than across all of them. Annualizing

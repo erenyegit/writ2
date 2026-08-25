@@ -3,15 +3,18 @@ pragma solidity ^0.8.26;
 
 import {Script, console2} from "forge-std/Script.sol";
 
+import {TestBTC} from "../src/TestBTC.sol";
 import {TestUSDC} from "../src/TestUSDC.sol";
 import {WritOptions} from "../src/WritOptions.sol";
 import {PythAdapter} from "../src/adapters/PythAdapter.sol";
 
 /// @notice Deploys the desk to GIWA Sepolia.
 ///
-/// GIWA has no canonical stablecoin, so this also deploys the faucet-backed
-/// TestUSDC used as the settlement asset on testnet. Pyth is already live at
-/// the same address it uses on other chains, so the adapter needs no changes.
+/// GIWA has neither a canonical stablecoin nor a wrapped BTC, so this also
+/// deploys both faucet-backed testnet assets. Settlement is physical, so the
+/// desk needs inventory in both: cash to buy a covered call away, and the
+/// underlying to deliver into an assigned put. Pyth is already live at the same
+/// address it uses on other chains, so the adapter needs no changes.
 ///
 /// Env:
 ///   DEPLOYER_PRIVATE_KEY  deployer key (fund via https://faucet.lambda256.io/giwa-sepolia)
@@ -32,16 +35,22 @@ contract Deploy is Script {
 
         vm.startBroadcast(deployerKey);
         TestUSDC usdc = new TestUSDC();
+        TestBTC btc = new TestBTC();
         PythAdapter adapter = new PythAdapter(pythAddr, feedId);
-        WritOptions core = new WritOptions(address(usdc), address(adapter), quoteSigner);
+        WritOptions core =
+            new WritOptions(address(usdc), address(btc), address(adapter), quoteSigner);
 
-        // Seed the desk so it can pay premiums from the first trade.
+        // Seed both sides: without inventory the desk cannot back either product.
         usdc.faucet();
+        btc.faucet();
         usdc.approve(address(core), type(uint256).max);
-        core.depositDesk(usdc.balanceOf(deployer));
+        btc.approve(address(core), type(uint256).max);
+        core.depositDeskUsdc(usdc.balanceOf(deployer));
+        core.depositDeskBtc(btc.balanceOf(deployer));
         vm.stopBroadcast();
 
         console2.log("TestUSDC:    ", address(usdc));
+        console2.log("TestBTC:     ", address(btc));
         console2.log("PythAdapter: ", address(adapter));
         console2.log("WritOptions: ", address(core));
     }

@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * Signed desk quote.
- * GET /api/quote?writer=0x..&isPut=true&strike=65000&qty=0.1&expiry=1770000000[&cap=75000]
+ * GET /api/quote?writer=0x..&isPut=true&strike=65000&qty=0.1&expiry=1770000000
  */
 export async function GET(req: NextRequest) {
   try {
@@ -20,8 +20,6 @@ export async function GET(req: NextRequest) {
     const strikeUsd = Number(sp.get("strike"));
     const qtyBtc = Number(sp.get("qty"));
     const expiry = Number(sp.get("expiry"));
-    const capRaw = sp.get("cap");
-    const capUsd = capRaw !== null ? Number(capRaw) : undefined;
     if (!Number.isFinite(strikeUsd) || !Number.isFinite(qtyBtc) || !Number.isInteger(expiry)) {
       return NextResponse.json(
         { error: "strike, qty, expiry are required numbers" },
@@ -31,7 +29,7 @@ export async function GET(req: NextRequest) {
 
     const spot = await fetchSpot();
     const result = await buildSignedQuote(
-      { writer, isPut, strikeUsd, capUsd, qtyBtc, expiry },
+      { writer, isPut, strikeUsd, qtyBtc, expiry },
       spot,
     );
     return NextResponse.json(result);

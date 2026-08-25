@@ -10,6 +10,10 @@ export const USDC_ADDRESS = (process.env.NEXT_PUBLIC_USDC_ADDRESS ??
 export const PYTH_ADDRESS = (process.env.NEXT_PUBLIC_PYTH_ADDRESS ??
   "0x2880aB155794e7179c9eE2e38200202908C17B43") as `0x${string}`;
 
+/** Faucet-backed underlying: covered-call collateral and put delivery. */
+export const BTC_ADDRESS = (process.env.NEXT_PUBLIC_BTC_ADDRESS ??
+  "0x0000000000000000000000000000000000000000") as `0x${string}`;
+
 export const BTC_USD_FEED_ID = (process.env.NEXT_PUBLIC_BTC_USD_FEED_ID ??
   "0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43") as `0x${string}`;
 

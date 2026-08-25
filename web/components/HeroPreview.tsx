@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { bsCappedCall, bsPut } from "@/lib/desk/bs";
+import { bsCall, bsPut } from "@/lib/desk/bs";
 import { deskSpread, impliedVol } from "@/lib/desk/surface";
 import { fmtUsd } from "@/lib/format";
 
@@ -19,7 +19,6 @@ import { fmtUsd } from "@/lib/format";
 const SIZE_BTC = 0.01;
 // Mirrors the desk's default pricing knobs (indicative preview only).
 const STEP = 500;
-const MIN_GAP = 1000;
 
 type Tab = "put" | "call";
 const EXPIRY_DAYS = [1, 3, 7] as const;
@@ -32,7 +31,6 @@ export function HeroPreview({ spot }: { spot: number | null }) {
   const [days, setDays] = useState<(typeof EXPIRY_DAYS)[number]>(7);
   const [putStrike, setPutStrike] = useState<number | null>(null);
   const [callStrike, setCallStrike] = useState<number | null>(null);
-  const [cap, setCap] = useState<number | null>(null);
   const seeded = useRef(false);
 
   // Seed defaults once the first live price arrives.
@@ -40,9 +38,7 @@ export function HeroPreview({ spot }: { spot: number | null }) {
     if (!spot || seeded.current) return;
     seeded.current = true;
     setPutStrike(roundStep(spot * 0.965));
-    const cs = roundStep(spot);
-    setCallStrike(cs);
-    setCap(cs + 3000);
+    setCallStrike(roundStep(spot));
   }, [spot]);
 
   const min = spot ? roundStep(spot * 0.85) : 0;
@@ -58,31 +54,22 @@ export function HeroPreview({ spot }: { spot: number | null }) {
       const fair = bsPut(spot, putStrike, T, impliedVol(spot, putStrike, T));
       return Math.max(fair * SIZE_BTC * (1 - deskSpread(spot, putStrike, T)), 0);
     }
-    if (tab === "call" && callStrike && cap && cap > callStrike) {
-      const fair = bsCappedCall(
-        spot,
-        callStrike,
-        cap,
-        T,
-        impliedVol(spot, callStrike, T),
-        impliedVol(spot, cap, T),
-      );
+    if (tab === "call" && callStrike) {
+      const fair = bsCall(spot, callStrike, T, impliedVol(spot, callStrike, T));
       return Math.max(fair * SIZE_BTC * (1 - deskSpread(spot, callStrike, T)), 0);
     }
     return null;
-  }, [spot, tab, putStrike, callStrike, cap, T]);
+  }, [spot, tab, putStrike, callStrike, T]);
 
-  const collateral =
-    tab === "put"
-      ? (putStrike ?? 0) * SIZE_BTC
-      : ((cap ?? 0) - (callStrike ?? 0)) * SIZE_BTC;
+  // A put locks cash at the strike; a covered call locks the BTC itself.
+  const collateral = tab === "put" ? (putStrike ?? 0) * SIZE_BTC : SIZE_BTC;
 
-  const ready = spot !== null && putStrike !== null && callStrike !== null && cap !== null;
+  const ready = spot !== null && putStrike !== null && callStrike !== null;
 
   const tradeHref =
     tab === "put"
       ? `/trade?side=put&strike=${putStrike ?? ""}&days=${days}`
-      : `/trade?side=call&strike=${callStrike ?? ""}&cap=${cap ?? ""}&days=${days}`;
+      : `/trade?side=call&strike=${callStrike ?? ""}&days=${days}`;
 
   return (
     <div className="flex h-full flex-col">
@@ -100,7 +87,7 @@ export function HeroPreview({ spot }: { spot: number | null }) {
         {(
           [
             ["put", "btc stays above", "cash-secured put"],
-            ["call", "btc stays below", "capped call"],
+            ["call", "btc stays below", "covered call"],
           ] as const
         ).map(([key, label, sub]) => (
           <button
@@ -175,9 +162,7 @@ export function HeroPreview({ spot }: { spot: number | null }) {
             pct={pct}
             spot={spot!}
             strike={callStrike!}
-            cap={cap!}
-            onStrike={(v) => setCallStrike(Math.min(v, cap! - MIN_GAP))}
-            onCap={(v) => setCap(Math.max(v, callStrike! + MIN_GAP))}
+            onStrike={(v) => setCallStrike(v)}
           />
         )}
       </div>
@@ -192,8 +177,8 @@ export function HeroPreview({ spot }: { spot: number | null }) {
           </p>
           <p className="mt-1 text-[12px] leading-relaxed text-steel-400">
             {tab === "put"
-              ? "Below the strike, settlement comes from your USDC collateral."
-              : `Above the strike, losses increase until the ${fmtUsd(cap!, 0)} cap and stop there.`}
+              ? "Below the strike, your USDC buys BTC at that price."
+              : "Above the strike, your BTC is sold at that price. You keep the premium either way."}
           </p>
         </div>
       )}
@@ -331,51 +316,36 @@ function CallBar({
   pct,
   spot,
   strike,
-  cap,
   onStrike,
-  onCap,
 }: {
   min: number;
   max: number;
   pct: (v: number) => number;
   spot: number;
   strike: number;
-  cap: number;
   onStrike: (v: number) => void;
-  onCap: (v: number) => void;
 }) {
   const s = pct(strike);
-  const c = pct(cap);
   return (
     <div className="px-1 pb-12">
       <div className={`relative mb-1.5 h-3 ${zoneLabel}`}>
         <span className="absolute left-0">full premium</span>
-        <span
-          className="absolute -translate-x-1/2 whitespace-nowrap"
-          style={{ left: `${Math.min(70, Math.max(26, (s + c) / 2))}%` }}
-        >
-          settlement
-        </span>
-        <span className="absolute right-0">max loss</span>
+        <span className="absolute right-0">sold at your strike</span>
       </div>
       <div className="relative h-3 rounded-full bg-ink-700">
         <div
           className="absolute inset-y-0 left-0 rounded-l-full bg-[#0F8A50]/20"
           style={{ width: `${s}%` }}
         />
+        {/* Above the strike the BTC is sold at that price. Not a loss zone:
+            the writer gets the price they named, plus the premium. */}
         <div
-          className="absolute inset-y-0 bg-[#A87718]/20"
-          style={{ left: `${s}%`, width: `${c - s}%` }}
-        />
-        <div
-          className="absolute inset-y-0 rounded-r-full bg-[#C24438]/20"
-          style={{ left: `${c}%`, right: 0 }}
+          className="absolute inset-y-0 rounded-r-full bg-[#A87718]/20"
+          style={{ left: `${s}%`, right: 0 }}
         />
         <Marker left={pct(spot)} label={`btc now · ${fmtUsd(spot, 0)}`} />
         <Handle left={s} color="#D99A2B" />
-        <Handle left={c} color="#3D5EE0" />
         <HandleLabel left={s} text={`strike<br/>${fmtUsd(strike, 0)}`} color="text-amber" />
-        <HandleLabel left={c} text={`cap<br/>${fmtUsd(cap, 0)}`} color="text-arc-300" />
         <input
           type="range"
           aria-label="strike price"
@@ -385,16 +355,6 @@ function CallBar({
           step={STEP}
           value={strike}
           onChange={(e) => onStrike(Number(e.target.value))}
-        />
-        <input
-          type="range"
-          aria-label="cap price"
-          className="hero-range absolute inset-0 z-40"
-          min={min}
-          max={max}
-          step={STEP}
-          value={cap}
-          onChange={(e) => onCap(Number(e.target.value))}
         />
       </div>
     </div>

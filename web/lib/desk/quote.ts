@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { privateKeyToAccount } from "viem/accounts";
 
-import { bsCappedCall, bsPut } from "./bs";
+import { bsCall, bsPut } from "./bs";
 import { deskConfig } from "./config";
 import { deskSpread, impliedVol } from "./surface";
 
@@ -31,7 +31,6 @@ const types = {
     { name: "writer", type: "address" },
     { name: "isPut", type: "bool" },
     { name: "strike", type: "uint64" },
-    { name: "cap", type: "uint64" },
     { name: "qty", type: "uint64" },
     { name: "expiry", type: "uint64" },
     { name: "premium", type: "uint128" },
@@ -44,7 +43,6 @@ export interface QuoteRequest {
   writer: `0x${string}`;
   isPut: boolean;
   strikeUsd: number;
-  capUsd?: number; // required for calls
   qtyBtc: number;
   expiry: number; // unix seconds
 }
@@ -56,24 +54,15 @@ export async function buildSignedQuote(req: QuoteRequest, spot: number) {
   const T = (req.expiry - now) / YEAR_SEC;
   if (T <= 0) throw new Error("expiry is in the past");
   if (req.qtyBtc <= 0 || req.strikeUsd <= 0) throw new Error("invalid size or strike");
-  if (!req.isPut && (!req.capUsd || req.capUsd <= req.strikeUsd)) {
-    throw new Error("calls require cap > strike");
-  }
 
   // Vol comes from the surface, so a far strike and a near one are not priced
-  // off the same number. A capped call is two strikes, so it takes two vols.
+  // off the same number.
   const iv = impliedVol(spot, req.strikeUsd, T);
+  // A covered call is the plain, uncapped call: the underlying it posts covers
+  // its own upside, so there is no short leg to subtract.
   const fairPerBtc = req.isPut
     ? bsPut(spot, req.strikeUsd, T, iv, deskConfig.riskFreeRate)
-    : bsCappedCall(
-        spot,
-        req.strikeUsd,
-        req.capUsd!,
-        T,
-        iv,
-        impliedVol(spot, req.capUsd!, T),
-        deskConfig.riskFreeRate,
-      );
+    : bsCall(spot, req.strikeUsd, T, iv, deskConfig.riskFreeRate);
   const spread = deskSpread(spot, req.strikeUsd, T);
   const fairUsd = fairPerBtc * req.qtyBtc;
   const bidUsd = fairUsd * (1 - spread);
@@ -82,19 +71,19 @@ export async function buildSignedQuote(req: QuoteRequest, spot: number) {
   if (premium <= 0n) throw new Error("premium rounds to zero — size too small");
 
   const strike = BigInt(Math.round(req.strikeUsd * 1e8));
-  const cap = req.isPut ? 0n : BigInt(Math.round(req.capUsd! * 1e8));
   const qty = BigInt(Math.round(req.qtyBtc * 1e8));
 
-  // Mirror of OptionMath.collateralUsdc (ceil).
-  const product = req.isPut ? strike * qty : (cap - strike) * qty;
-  const collateral = ceilDiv(product, 10n ** 10n);
-  if (premium >= collateral) throw new Error("premium >= collateral — refusing to quote");
+  // Mirror of OptionMath.notionalUsdc — the cash side of the trade, quoted
+  // once so a put's collateral and a covered call's proceeds always agree.
+  const notional = ceilDiv(strike * qty, 10n ** 10n);
+  if (premium >= notional) throw new Error("premium >= notional — refusing to quote");
+  // A put locks that cash; a covered call locks the underlying, one for one.
+  const collateral = req.isPut ? notional : qty;
 
   const quote = {
     writer: req.writer,
     isPut: req.isPut,
     strike,
-    cap,
     qty,
     expiry: BigInt(req.expiry),
     premium,
@@ -114,7 +103,6 @@ export async function buildSignedQuote(req: QuoteRequest, spot: number) {
       writer: quote.writer,
       isPut: quote.isPut,
       strike: quote.strike.toString(),
-      cap: quote.cap.toString(),
       qty: quote.qty.toString(),
       expiry: quote.expiry.toString(),
       premium: quote.premium.toString(),
@@ -131,12 +119,18 @@ export async function buildSignedQuote(req: QuoteRequest, spot: number) {
       deskBidUsd: bidUsd,
       premiumUsdc: quote.premium.toString(),
       collateralUsdc: collateral.toString(),
+      collateralAsset: req.isPut ? ("usdc" as const) : ("btc" as const),
+      notionalUsdc: notional.toString(),
       /**
        * The premium as an annualized rate on the capital it locks up. This is
        * the number a writer actually compares between strikes and tenors; a
        * raw premium says nothing without the tenor beside it.
        */
-      aprPct: (Number(premium) / Number(collateral) / T) * 100,
+      /** Both products commit full notional, so the rates are comparable:
+       *  a put locks the cash, a covered call locks an asset worth about it. */
+      aprPct:
+        (Number(premium) / 1e6 / (req.isPut ? (Number(notional) / 1e6) : req.qtyBtc * spot) / T) *
+        100,
       quoter: quoterAddress(),
     },
   };

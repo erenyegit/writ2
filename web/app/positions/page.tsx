@@ -169,7 +169,22 @@ function PositionRow({
   const expired = now >= Number(pos.expiry);
   const open = pos.state === 1;
   const settled = pos.state === 2;
-  const refund = settled ? pos.collateral - pos.payout : 0n;
+  /** A put locks cash; a covered call locks the underlying itself. */
+  const fmtCollateral = (v: bigint) =>
+    pos.isPut ? fmtUsdc(v) : `${Number(v) / 1e8} btc`;
+
+  /**
+   * Settlement is physical, so there is no partial refund: either the position
+   * was assigned and the two sides swapped in full at the strike, or nothing
+   * moved and the collateral came straight back.
+   */
+  const outcome = !settled
+    ? null
+    : pos.assigned
+      ? pos.isPut
+        ? `bought ${Number(pos.qty) / 1e8} btc @ ${fmtPrice8(pos.strike)}`
+        : `sold ${Number(pos.qty) / 1e8} btc @ ${fmtPrice8(pos.strike)}`
+      : "collateral returned";
 
   const onSettle = async () => {
     setSettling(true);
@@ -209,18 +224,15 @@ function PositionRow({
         >
           {pos.isPut ? "put" : "call"}
         </span>
-        <span className="num text-char">
-          {fmtPrice8(pos.strike)}
-          {!pos.isPut && <span className="text-steel-500"> → {fmtPrice8(pos.cap)}</span>}
-        </span>
+        <span className="num text-char">{fmtPrice8(pos.strike)}</span>
         <span className="num text-steel-300">{fmtQty8(pos.qty)}</span>
         <span className="num text-steel-300">{fmtTs(pos.expiry)}</span>
         <span className="num tick">{fmtUsdc(pos.premium)}</span>
-        <span className="num text-steel-300">{fmtUsdc(pos.collateral)}</span>
+        <span className="num text-steel-300">{fmtCollateral(pos.collateral)}</span>
         <span>
           {settled ? (
-            <span className="text-steel-500">
-              settled · {fmtPrice8(pos.settlementPrice)}
+            <span className={pos.assigned ? "text-amber" : "text-steel-500"}>
+              {pos.assigned ? "assigned" : "expired"} · {fmtPrice8(pos.settlementPrice)}
             </span>
           ) : expired ? (
             <span className="text-amber">awaiting settlement</span>
@@ -234,7 +246,7 @@ function PositionRow({
               {settling ? "settling…" : "settle"}
             </button>
           ) : settled ? (
-            <span className="num text-steel-400">+{fmtUsdc(refund)} back</span>
+            <span className="num text-steel-400">{outcome}</span>
           ) : (
             <span className="micro">#{id.toString()}</span>
           )}

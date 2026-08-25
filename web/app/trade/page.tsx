@@ -10,7 +10,13 @@ import {
 } from "wagmi";
 
 import { coreAbi, faucetAbi } from "@/lib/abi";
-import { CORE_ADDRESS, EXPLORER_URL, USDC_ADDRESS, isConfigured } from "@/lib/addresses";
+import {
+  BTC_ADDRESS,
+  CORE_ADDRESS,
+  EXPLORER_URL,
+  USDC_ADDRESS,
+  isConfigured,
+} from "@/lib/addresses";
 import { getMarket, getQuote, type Market, type SignedQuote } from "@/lib/api";
 import { fmtTs, fmtUsd, fmtUsdc } from "@/lib/format";
 
@@ -25,26 +31,20 @@ export default function TradePage() {
   const [marketError, setMarketError] = useState<string | null>(null);
   const [side, setSide] = useState<Side>("put");
   const [strike, setStrike] = useState<number | null>(null);
-  const [cap, setCap] = useState<number | null>(null);
   const [qty, setQty] = useState("0.001");
   const [expiry, setExpiry] = useState<number | null>(null);
   const [quote, setQuote] = useState<SignedQuote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [quoting, setQuoting] = useState(false);
 
-  // Deep-link params from the hero preview: ?side, ?strike, ?cap, ?days
-  const urlParams = useRef<{ cap?: number; days?: number }>({});
+  // Deep-link params from the hero preview: ?side, ?strike, ?days
+  const urlParams = useRef<{ days?: number }>({});
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const s = q.get("side");
     if (s === "call" || s === "put") setSide(s);
     const st = Number(q.get("strike"));
     if (Number.isFinite(st) && st > 0) setStrike(st);
-    const cp = Number(q.get("cap"));
-    if (Number.isFinite(cp) && cp > 0) {
-      setCap(cp);
-      urlParams.current.cap = cp;
-    }
     const dy = Number(q.get("days"));
     if (Number.isFinite(dy) && dy > 0) urlParams.current.days = dy;
   }, []);
@@ -101,16 +101,6 @@ export default function TradePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [side, spot, ladder.length]);
 
-  useEffect(() => {
-    if (side !== "call" || !market || !strike) return;
-    if (urlParams.current.cap) {
-      urlParams.current.cap = undefined; // deep-linked cap wins once
-      return;
-    }
-    const above = market.strikes.filter((s) => s > strike);
-    setCap(above[1] ?? above[0] ?? null);
-  }, [side, strike, market]);
-
   // ------------------------------------------------------------ quoting
 
   const qtyNum = Number(qty);
@@ -119,7 +109,7 @@ export default function TradePage() {
     !!strike &&
     !!expiry &&
     qtyNum > 0 &&
-    (side === "put" || (!!cap && cap > (strike ?? 0)));
+    true;
 
   const refreshQuote = useCallback(() => {
     if (!paramsReady || !address || !strike || !expiry) return;
@@ -128,7 +118,6 @@ export default function TradePage() {
       writer: address,
       isPut: side === "put",
       strike,
-      cap: side === "call" ? cap! : undefined,
       qty: qtyNum,
       expiry,
     })
@@ -142,7 +131,7 @@ export default function TradePage() {
       })
       .finally(() => setQuoting(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address, side, strike, cap, qtyNum, expiry, paramsReady]);
+  }, [address, side, strike, qtyNum, expiry, paramsReady]);
 
   useEffect(() => {
     refreshQuote();
@@ -152,18 +141,25 @@ export default function TradePage() {
 
   // ------------------------------------------------------------ txs
 
+  /** A put locks cash; a covered call locks the underlying itself. */
+  const collateralToken =
+    side === "put"
+      ? { address: USDC_ADDRESS, symbol: "usdc", decimals: 6 }
+      : { address: BTC_ADDRESS, symbol: "btc", decimals: 8 };
   const collateral = quote ? BigInt(quote.meta.collateralUsdc) : 0n;
+  const fmtCollateral = (v: bigint) =>
+    side === "put" ? fmtUsdc(v) : `${Number(v) / 1e8} btc`;
 
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     abi: erc20Abi,
-    address: USDC_ADDRESS,
+    address: collateralToken.address,
     functionName: "allowance",
     args: address ? [address, CORE_ADDRESS] : undefined,
     query: { enabled: !!address && isConfigured() },
   });
-  const { data: usdcBalance, refetch: refetchBalance } = useReadContract({
+  const { data: collateralBalance, refetch: refetchBalance } = useReadContract({
     abi: erc20Abi,
-    address: USDC_ADDRESS,
+    address: collateralToken.address,
     functionName: "balanceOf",
     args: address ? [address] : undefined,
     query: { enabled: !!address },
@@ -198,7 +194,7 @@ export default function TradePage() {
   const onApprove = () =>
     approve({
       abi: erc20Abi,
-      address: USDC_ADDRESS,
+      address: collateralToken.address,
       functionName: "approve",
       args: [CORE_ADDRESS, maxUint256],
     });
@@ -215,7 +211,6 @@ export default function TradePage() {
           writer: q.writer,
           isPut: q.isPut,
           strike: BigInt(q.strike),
-          cap: BigInt(q.cap),
           qty: BigInt(q.qty),
           expiry: BigInt(q.expiry),
           premium: BigInt(q.premium),
@@ -247,17 +242,17 @@ export default function TradePage() {
   const [confirming, setConfirming] = useState(false);
   useEffect(() => {
     setConfirming(false);
-  }, [quote?.quote.nonce, side, strike, cap, expiry]);
+  }, [quote?.quote.nonce, side, strike, expiry]);
 
-  const insufficient = usdcBalance !== undefined && quote !== null && usdcBalance < collateral;
+  const insufficient =
+    collateralBalance !== undefined && quote !== null && collateralBalance < collateral;
   const maxSize =
-    usdcBalance !== undefined && strike
-      ? side === "put"
-        ? Math.floor((Number(usdcBalance) / 1e6 / strike) * 1e4) / 1e4
-        : cap && cap > strike
-          ? Math.floor((Number(usdcBalance) / 1e6 / (cap - strike)) * 1e4) / 1e4
-          : 0
-      : null;
+    collateralBalance === undefined || !strike
+      ? null
+      : side === "put"
+        ? Math.floor((Number(collateralBalance) / 1e6 / strike) * 1e4) / 1e4
+        : // A covered call locks the underlying one for one, so the balance is the size.
+          Math.floor((Number(collateralBalance) / 1e8) * 1e4) / 1e4;
   const quoteExpired = quote !== null && nowSec > Number(quote.quote.quoteDeadline);
 
   return (
@@ -294,13 +289,13 @@ export default function TradePage() {
                 cash-secured put
               </button>
               <button data-active={side === "call"} onClick={() => setSide("call")}>
-                capped call
+                covered call
               </button>
             </div>
             <p className="mt-3 text-steel-400">
               {side === "put"
-                ? "if btc closes below your strike, the difference is paid from your usdc collateral — no btc changes hands. collateral: strike × size."
-                : "you sell the upside between strike and cap — settled in usdc, losses stop at the cap. collateral: (cap − strike) × size."}
+                ? "if btc closes below your strike, you buy it at that price — the one you named. your usdc collateral becomes btc. collateral: strike × size."
+                : "you post btc and sell the upside above your strike. above it your btc is sold at that price — the one you named. collateral: size, in btc."}
             </p>
           </div>
 
@@ -333,27 +328,6 @@ export default function TradePage() {
           </div>
 
           <div className="grid gap-5 p-5 sm:grid-cols-2">
-            {side === "call" && (
-              <div>
-                <span className="label">cap</span>
-                <select
-                  className="field"
-                  value={cap ?? ""}
-                  onChange={(e) => setCap(Number(e.target.value))}
-                >
-                  {market?.strikes
-                    .filter((s) => strike && s > strike)
-                    .map((s) => (
-                      <option key={s} value={s}>
-                        {fmtUsd(s, 0)}
-                      </option>
-                    ))}
-                </select>
-                <p className="mt-2 text-[11px] text-steel-400">
-                  the cap is the price where your loss stops growing.
-                </p>
-              </div>
-            )}
             <div>
               <span className="label">size · btc</span>
               <input
@@ -388,10 +362,8 @@ export default function TradePage() {
               {strike && qtyNum > 0 && (
                 <p className="num mt-2 text-[11px] text-steel-500">
                   {side === "put"
-                    ? `you promise to buy ${qtyNum} btc @ ${fmtUsd(strike, 0)} → locks ${fmtUsd(qtyNum * strike)} · settled in usdc`
-                    : cap && cap > strike
-                      ? `you sell upside on ${qtyNum} btc (${fmtUsd(strike, 0)}→${fmtUsd(cap, 0)}) → locks ${fmtUsd(qtyNum * (cap - strike))} · settled in usdc`
-                      : ""}
+                    ? `you promise to buy ${qtyNum} btc @ ${fmtUsd(strike, 0)} → locks ${fmtUsd(qtyNum * strike)} · delivered in btc if assigned`
+                    : `you promise to sell ${qtyNum} btc @ ${fmtUsd(strike, 0)} → locks ${qtyNum} btc · paid in usdc if assigned`}
                 </p>
               )}
             </div>
@@ -445,15 +417,12 @@ export default function TradePage() {
                   />
                   <Row k="max net loss" v={fmtUsdc(maxNetLoss)} tone="bad" />
                   {breakeven !== null && <Row k="breakeven at expiry" v={fmtUsd(breakeven, 0)} />}
-                  {side === "call" && cap !== null && (
-                    <Row k="max loss reached at" v={fmtUsd(cap, 0)} />
-                  )}
                 </div>
 
                 <p className="text-[11px] leading-relaxed text-steel-400">
                   {side === "put"
                     ? `keep the full premium if btc expires at or above ${strike ? fmtUsd(strike, 0) : "your strike"}. below it, the difference is paid from your collateral — in usdc.`
-                    : `keep the full premium if btc expires at or below ${strike ? fmtUsd(strike, 0) : "your strike"}. above it, losses grow until the cap and stop there.`}
+                    : `keep the full premium if btc expires at or below ${strike ? fmtUsd(strike, 0) : "your strike"}. above it your btc is sold at the strike, and you keep the premium on top.`}
                 </p>
 
                 <div className="panel-inset divide-y divide-[rgba(20,23,30,0.12)] text-[12px]">
@@ -464,14 +433,19 @@ export default function TradePage() {
                     v={`${(quote.meta.ivAnnualized * 100).toFixed(1)}%`}
                   />
                   <Row k="quote expires" v={fmtTs(Number(quote.quote.quoteDeadline))} />
-                  {usdcBalance !== undefined && <Row k="your usdc" v={fmtUsdc(usdcBalance)} />}
+                  {collateralBalance !== undefined && (
+                    <Row
+                      k={`your ${collateralToken.symbol}`}
+                      v={fmtCollateral(collateralBalance)}
+                    />
+                  )}
                 </div>
 
                 {insufficient ? (
                   <div className="space-y-2">
                     <div className="panel-inset border-danger/40 p-3 text-[12px] leading-relaxed text-danger">
                       insufficient usdc — this trade locks {fmtUsdc(collateral)} but you hold{" "}
-                      {fmtUsdc(usdcBalance!)}.
+                      {fmtCollateral(collateralBalance!)}.
                       {maxSize ? ` max size at this strike ≈ ${maxSize} btc.` : ""}
                     </div>
                     <button

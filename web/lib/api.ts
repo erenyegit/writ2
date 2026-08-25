@@ -18,7 +18,6 @@ export interface SignedQuote {
     writer: `0x${string}`;
     isPut: boolean;
     strike: string;
-    cap: string;
     qty: string;
     expiry: string;
     premium: string;
@@ -34,6 +33,8 @@ export interface SignedQuote {
     deskBidUsd: number;
     premiumUsdc: string;
     collateralUsdc: string;
+    collateralAsset: "usdc" | "btc";
+    notionalUsdc: string;
     aprPct: number;
     deskSpread: number;
     quoter: `0x${string}`;
@@ -50,7 +51,6 @@ export async function getQuote(params: {
   writer: `0x${string}`;
   isPut: boolean;
   strike: number;
-  cap?: number;
   qty: number;
   expiry: number;
 }): Promise<SignedQuote> {
@@ -61,7 +61,6 @@ export async function getQuote(params: {
     qty: String(params.qty),
     expiry: String(params.expiry),
   });
-  if (params.cap !== undefined) q.set("cap", String(params.cap));
   const res = await fetch(`/api/quote?${q.toString()}`);
   const body = await res.json();
   if (!res.ok) throw new Error(body.error ?? `quote: ${res.status}`);

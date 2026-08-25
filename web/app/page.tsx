@@ -57,13 +57,13 @@ export default function EarnPage() {
 
   const { data: deskStats } = useReadContracts({
     contracts: [
-      { abi: coreAbi, address: CORE_ADDRESS, functionName: "deskBalance" },
-      { abi: coreAbi, address: CORE_ADDRESS, functionName: "totalOpenCollateral" },
+      { abi: coreAbi, address: CORE_ADDRESS, functionName: "deskUsdcFree" },
+      { abi: coreAbi, address: CORE_ADDRESS, functionName: "deskBtcFree" },
     ],
     query: { enabled: isConfigured(), refetchInterval: 15_000 },
   });
   const deskBalance = deskStats?.[0]?.result as bigint | undefined;
-  const openCollateral = deskStats?.[1]?.result as bigint | undefined;
+  const deskBtc = deskStats?.[1]?.result as bigint | undefined;
 
   return (
     <div className="space-y-10 pt-10">
@@ -107,9 +107,11 @@ export default function EarnPage() {
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-hairline bg-ink-700/70 shadow-soft lg:grid-cols-4">
         {[
           ["testnet desk liquidity", deskBalance !== undefined ? fmtUsdc(deskBalance) : "—"],
-          ["testnet open collateral", openCollateral !== undefined ? fmtUsdc(openCollateral) : "—"],
+          // Settlement is physical, so the desk's underlying is a real capacity
+          // limit on puts: it can only sell you a put it could deliver into.
+          ["testnet btc inventory", deskBtc !== undefined ? `${Number(deskBtc) / 1e8} btc` : "—"],
           ["settlement oracle", "pyth · first tick after expiry"],
-          ["collateralization", "100% · loss capped at posted collateral"],
+          ["settlement", "physical · delivered at the strike"],
         ].map(([k, v]) => (
           <div key={k} className="bg-ink-900 px-5 py-4">
             <div className="micro mb-1.5">{k}</div>
@@ -122,7 +124,7 @@ export default function EarnPage() {
       <section className="panel overflow-hidden">
         <div className="flex items-center justify-between border-b border-hairline bg-ink-850 px-4 py-3">
           <span className="micro-amber">{"~/products"}</span>
-          <span className="micro">cash-settled · european · usdc collateral</span>
+          <span className="micro">physically settled · european · fully collateralized</span>
         </div>
 
         <div className="thead hidden grid-cols-[1.2fr_2.2fr_1.2fr_1fr_auto] sm:grid">
@@ -137,15 +139,15 @@ export default function EarnPage() {
           {
             name: "cash-secured put",
             desc: "keep the full premium if btc expires at or above your strike.",
-            sub: "below it, settlement is deducted from your usdc collateral.",
+            sub: "below it you buy btc at that price — the one you named — and you keep the premium.",
             coll: "strike × size",
             side: "put",
           },
           {
-            name: "capped call",
+            name: "covered call",
             desc: "keep the full premium if btc expires at or below your strike.",
-            sub: "above it, settlement is deducted until your cap — and stops there.",
-            coll: "(cap − strike) × size",
+            sub: "above it your btc is sold at that price — the one you named — and you keep the premium.",
+            coll: "size, in btc",
             side: "call",
           },
         ].map((p) => (
@@ -167,8 +169,6 @@ export default function EarnPage() {
                   return r ? `${r.minPct.toFixed(0)}% – ${r.maxPct.toFixed(0)}%` : "—";
                 })()}
               </span>
-              {/* The base belongs beside the rate: a call spread locks only its
-                  width, so the same premium reads as a much larger rate. */}
               <span className="block text-[11px] text-steel-500">on {p.coll}</span>
             </span>
             <Link href={`/trade?side=${p.side}`} className="btn-ghost">

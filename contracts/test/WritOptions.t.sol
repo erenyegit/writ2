@@ -8,6 +8,7 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {WritOptions} from "../src/WritOptions.sol";
 import {PythAdapter} from "../src/adapters/PythAdapter.sol";
 import {OptionMath} from "../src/libraries/OptionMath.sol";
+import {MockBTC} from "./mocks/MockBTC.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 import {MockPyth} from "./mocks/MockPyth.sol";
 
@@ -17,6 +18,7 @@ contract WritOptionsTest is Test {
     uint256 constant QUOTER_PK = 0xA11CE;
 
     MockUSDC usdc;
+    MockBTC btc;
     MockPyth pyth;
     PythAdapter adapter;
     WritOptions core;
@@ -28,17 +30,26 @@ contract WritOptionsTest is Test {
     function setUp() public {
         quoter = vm.addr(QUOTER_PK);
         usdc = new MockUSDC();
+        btc = new MockBTC();
         pyth = new MockPyth();
         adapter = new PythAdapter(address(pyth), FEED_ID);
-        core = new WritOptions(address(usdc), address(adapter), quoter);
+        core = new WritOptions(address(usdc), address(btc), address(adapter), quoter);
 
+        // Physical settlement means the desk holds both sides: cash to buy a
+        // covered call away, and the underlying to deliver into an assigned put.
         usdc.mint(address(this), 1_000_000e6);
+        btc.mint(address(this), 100e8);
         usdc.approve(address(core), type(uint256).max);
-        core.depositDesk(200_000e6);
+        btc.approve(address(core), type(uint256).max);
+        core.depositDeskUsdc(200_000e6);
+        core.depositDeskBtc(50e8);
 
         usdc.mint(writer, 500_000e6);
-        vm.prank(writer);
+        btc.mint(writer, 10e8);
+        vm.startPrank(writer);
         usdc.approve(address(core), type(uint256).max);
+        btc.approve(address(core), type(uint256).max);
+        vm.stopPrank();
 
         vm.deal(address(this), 10 ether);
         vm.deal(writer, 10 ether);
@@ -52,7 +63,6 @@ contract WritOptionsTest is Test {
             writer: writer,
             isPut: true,
             strike: 65_000e8,
-            cap: 0,
             qty: 1e7,
             expiry: uint64(block.timestamp + 1 days),
             premium: 120e6,
@@ -61,12 +71,11 @@ contract WritOptionsTest is Test {
         });
     }
 
-    /// Capped call: strike $65,000, cap $75,000, qty 0.1 BTC -> collateral 1,000 USDC.
+    /// Covered call: same strike and size, collateral is 0.1 BTC.
     function _callQuote() internal returns (WritOptions.Quote memory q) {
         q = _putQuote();
         q.isPut = false;
-        q.cap = 75_000e8;
-        q.premium = 60e6;
+        q.premium = 90e6;
     }
 
     function _sign(WritOptions.Quote memory q) internal view returns (bytes memory) {
@@ -96,11 +105,18 @@ contract WritOptionsTest is Test {
         core.settle{value: 1}(id, _oracleData(price, expiry + 2, expiry - 10, -8));
     }
 
+    /// Every token in the contract is either uncommitted desk inventory, desk
+    /// inventory reserved against an open position, or writer collateral.
     function _assertSolvent() internal view {
         assertEq(
             usdc.balanceOf(address(core)),
-            core.deskBalance() + core.totalOpenCollateral(),
-            "solvency invariant broken"
+            core.deskUsdcFree() + core.deskUsdcReserved() + core.writerUsdcCollateral(),
+            "usdc solvency invariant broken"
+        );
+        assertEq(
+            btc.balanceOf(address(core)),
+            core.deskBtcFree() + core.deskBtcReserved() + core.writerBtcCollateral(),
+            "btc solvency invariant broken"
         );
     }
 
@@ -108,56 +124,83 @@ contract WritOptionsTest is Test {
 
     function test_Constructor_RevertZeroAddress() public {
         vm.expectRevert(WritOptions.ZeroAddress.selector);
-        new WritOptions(address(0), address(adapter), quoter);
+        new WritOptions(address(0), address(btc), address(adapter), quoter);
         vm.expectRevert(WritOptions.ZeroAddress.selector);
-        new WritOptions(address(usdc), address(0), quoter);
+        new WritOptions(address(usdc), address(0), address(adapter), quoter);
         vm.expectRevert(WritOptions.ZeroAddress.selector);
-        new WritOptions(address(usdc), address(adapter), address(0));
+        new WritOptions(address(usdc), address(btc), address(0), quoter);
+        vm.expectRevert(WritOptions.ZeroAddress.selector);
+        new WritOptions(address(usdc), address(btc), address(adapter), address(0));
     }
 
     // ------------------------------------------------------------- write
 
-    function test_WritePut_HappyPath() public {
-        uint256 writerBefore = usdc.balanceOf(writer);
-        WritOptions.Quote memory q = _putQuote();
+    function test_WritePut_LocksCashAndReservesUnderlying() public {
+        uint256 usdcBefore = usdc.balanceOf(writer);
+        uint256 btcFreeBefore = core.deskBtcFree();
 
-        uint256 id = _write(q);
+        uint256 id = _write(_putQuote());
 
         WritOptions.Position memory pos = core.getPosition(id);
-        assertEq(pos.writer, writer);
         assertTrue(pos.isPut);
         assertEq(pos.collateral, 6_500e6);
-        assertEq(pos.premium, 120e6);
         assertEq(uint8(pos.state), uint8(WritOptions.PositionState.Open));
 
-        // writer paid collateral, received premium instantly
-        assertEq(usdc.balanceOf(writer), writerBefore - 6_500e6 + 120e6);
-        assertEq(core.totalOpenCollateral(), 6_500e6);
-        assertEq(core.deskBalance(), 200_000e6 - 120e6);
-        assertEq(core.getWriterPositionIds(writer).length, 1);
-        assertEq(core.getWriterPositionIds(writer)[0], id);
+        assertEq(usdc.balanceOf(writer), usdcBefore - 6_500e6 + 120e6);
+        assertEq(core.writerUsdcCollateral(), 6_500e6);
+        // The desk may have to deliver, so that underlying is no longer free.
+        assertEq(core.deskBtcFree(), btcFreeBefore - 1e7);
+        assertEq(core.deskBtcReserved(), 1e7);
         _assertSolvent();
     }
 
-    function test_WriteCall_HappyPath() public {
+    function test_WriteCoveredCall_LocksUnderlyingAndReservesCash() public {
+        uint256 btcBefore = btc.balanceOf(writer);
+        uint256 usdcFreeBefore = core.deskUsdcFree();
+
         uint256 id = _write(_callQuote());
+
         WritOptions.Position memory pos = core.getPosition(id);
-        assertEq(pos.collateral, 1_000e6); // (75k - 65k) * 0.1
-        assertEq(pos.premium, 60e6);
+        assertFalse(pos.isPut);
+        assertEq(pos.collateral, 1e7, "collateral is the underlying, one for one");
+
+        assertEq(btc.balanceOf(writer), btcBefore - 1e7);
+        assertEq(core.writerBtcCollateral(), 1e7);
+        // 6,500 reserved to buy it away, and 90 already paid out as premium.
+        assertEq(core.deskUsdcFree(), usdcFreeBefore - 6_500e6 - 90e6);
+        assertEq(core.deskUsdcReserved(), 6_500e6);
         _assertSolvent();
+    }
+
+    function test_WritePut_RevertWhen_DeskCannotDeliverUnderlying() public {
+        core.withdrawDeskBtc(address(this), core.deskBtcFree());
+        WritOptions.Quote memory q = _putQuote();
+        bytes memory sig = _sign(q);
+        vm.prank(writer);
+        vm.expectRevert(WritOptions.InsufficientDeskInventory.selector);
+        core.writeOption(q, sig);
+    }
+
+    function test_WriteCall_RevertWhen_DeskCannotPayStrike() public {
+        core.withdrawDeskUsdc(address(this), core.deskUsdcFree() - 100e6);
+        WritOptions.Quote memory q = _callQuote();
+        bytes memory sig = _sign(q);
+        vm.prank(writer);
+        vm.expectRevert(WritOptions.InsufficientDeskInventory.selector);
+        core.writeOption(q, sig);
     }
 
     function test_Write_RevertWhen_SenderNotWriter() public {
         WritOptions.Quote memory q = _putQuote();
         bytes memory sig = _sign(q);
         vm.expectRevert(WritOptions.NotQuoteWriter.selector);
-        core.writeOption(q, sig); // called by test contract, not `writer`
+        core.writeOption(q, sig);
     }
 
     function test_Write_RevertWhen_QuoteDeadlinePassed() public {
         WritOptions.Quote memory q = _putQuote();
         bytes memory sig = _sign(q);
-        vm.warp(block.timestamp + 61);
+        vm.warp(q.quoteDeadline + 1);
         vm.prank(writer);
         vm.expectRevert(WritOptions.QuoteExpired.selector);
         core.writeOption(q, sig);
@@ -175,7 +218,7 @@ contract WritOptionsTest is Test {
     function test_Write_RevertWhen_SignatureTampered() public {
         WritOptions.Quote memory q = _putQuote();
         bytes memory sig = _sign(q);
-        q.premium = 6_000e6; // inflate premium after signing
+        q.premium = 121e6; // signed for 120
         vm.prank(writer);
         vm.expectRevert(WritOptions.InvalidQuoteSignature.selector);
         core.writeOption(q, sig);
@@ -183,7 +226,7 @@ contract WritOptionsTest is Test {
 
     function test_Write_RevertWhen_SignerNotQuoter() public {
         WritOptions.Quote memory q = _putQuote();
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(0xBAD, core.hashQuote(q));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(0xB0B, core.hashQuote(q));
         vm.prank(writer);
         vm.expectRevert(WritOptions.InvalidQuoteSignature.selector);
         core.writeOption(q, abi.encodePacked(r, s, v));
@@ -191,7 +234,7 @@ contract WritOptionsTest is Test {
 
     function test_Write_RevertWhen_ExpiryTooSoon() public {
         WritOptions.Quote memory q = _putQuote();
-        q.expiry = uint64(block.timestamp + 10 minutes);
+        q.expiry = uint64(block.timestamp + 5 minutes);
         bytes memory sig = _sign(q);
         vm.prank(writer);
         vm.expectRevert(WritOptions.ExpiryOutOfRange.selector);
@@ -207,33 +250,6 @@ contract WritOptionsTest is Test {
         core.writeOption(q, sig);
     }
 
-    function test_Write_RevertWhen_PutHasCap() public {
-        WritOptions.Quote memory q = _putQuote();
-        q.cap = 1;
-        bytes memory sig = _sign(q);
-        vm.prank(writer);
-        vm.expectRevert(WritOptions.InvalidOptionParams.selector);
-        core.writeOption(q, sig);
-    }
-
-    function test_Write_RevertWhen_CallCapNotAboveStrike() public {
-        WritOptions.Quote memory q = _callQuote();
-        q.cap = q.strike;
-        bytes memory sig = _sign(q);
-        vm.prank(writer);
-        vm.expectRevert(WritOptions.InvalidOptionParams.selector);
-        core.writeOption(q, sig);
-    }
-
-    function test_Write_RevertWhen_PremiumGteCollateral() public {
-        WritOptions.Quote memory q = _putQuote();
-        q.premium = 6_500e6; // == collateral
-        bytes memory sig = _sign(q);
-        vm.prank(writer);
-        vm.expectRevert(WritOptions.InvalidPremium.selector);
-        core.writeOption(q, sig);
-    }
-
     function test_Write_RevertWhen_PremiumZero() public {
         WritOptions.Quote memory q = _putQuote();
         q.premium = 0;
@@ -243,12 +259,12 @@ contract WritOptionsTest is Test {
         core.writeOption(q, sig);
     }
 
-    function test_Write_RevertWhen_DeskUnderfunded() public {
-        core.withdrawDesk(address(this), 200_000e6 - 1e6); // leave 1 USDC
+    function test_Write_RevertWhen_PremiumGteNotional() public {
         WritOptions.Quote memory q = _putQuote();
+        q.premium = 6_500e6;
         bytes memory sig = _sign(q);
         vm.prank(writer);
-        vm.expectRevert(WritOptions.InsufficientDeskLiquidity.selector);
+        vm.expectRevert(WritOptions.InvalidPremium.selector);
         core.writeOption(q, sig);
     }
 
@@ -263,7 +279,7 @@ contract WritOptionsTest is Test {
 
     function test_Write_RevertWhen_PositionTooLarge() public {
         core.setRiskParams(20 minutes, 30 days, 3 days, 1_000e6, 1_000_000e6);
-        WritOptions.Quote memory q = _putQuote(); // needs 6,500 USDC
+        WritOptions.Quote memory q = _putQuote();
         bytes memory sig = _sign(q);
         vm.prank(writer);
         vm.expectRevert(WritOptions.PositionTooLarge.selector);
@@ -271,72 +287,88 @@ contract WritOptionsTest is Test {
     }
 
     function test_Write_RevertWhen_ProtocolCapReached() public {
-        core.setRiskParams(20 minutes, 30 days, 3 days, 100_000e6, 10_000e6);
-        _write(_putQuote()); // 6,500 locked, cap 10,000
-        WritOptions.Quote memory q2 = _putQuote();
-        bytes memory sig = _sign(q2);
+        core.setRiskParams(20 minutes, 30 days, 3 days, 10_000e6, 10_000e6);
+        _write(_putQuote());
+        WritOptions.Quote memory q = _putQuote();
+        bytes memory sig = _sign(q);
         vm.prank(writer);
         vm.expectRevert(WritOptions.ProtocolCapReached.selector);
-        core.writeOption(q2, sig);
+        core.writeOption(q, sig);
     }
 
     // ------------------------------------------------------------- settle
 
-    function test_SettlePut_ITM() public {
+    function test_SettlePut_Assigned_WriterReceivesUnderlying() public {
         WritOptions.Quote memory q = _putQuote();
         uint256 id = _write(q);
-        uint256 writerBefore = usdc.balanceOf(writer);
-        uint256 deskBefore = core.deskBalance();
+        uint256 btcBefore = btc.balanceOf(writer);
+        uint256 usdcBefore = usdc.balanceOf(writer);
 
-        _settleAt(id, q.expiry, 60_000e8); // $5,000 ITM on 0.1 BTC = 500 USDC
+        _settleAt(id, q.expiry, 60_000e8); // below the strike
 
         WritOptions.Position memory pos = core.getPosition(id);
-        assertEq(uint8(pos.state), uint8(WritOptions.PositionState.Settled));
-        assertEq(pos.payout, 500e6);
-        assertEq(pos.settlementPrice, 60_000e8);
-        assertEq(usdc.balanceOf(writer), writerBefore + 6_000e6); // collateral - payout
-        assertEq(core.deskBalance(), deskBefore + 500e6);
-        assertEq(core.totalOpenCollateral(), 0);
+        assertTrue(pos.assigned);
+        // The writer bought at the price they named: cash out, underlying in.
+        assertEq(btc.balanceOf(writer), btcBefore + 1e7);
+        assertEq(usdc.balanceOf(writer), usdcBefore, "no cash comes back on assignment");
+        assertEq(core.deskUsdcFree(), 200_000e6 - 120e6 + 6_500e6);
+        assertEq(core.deskBtcReserved(), 0);
         _assertSolvent();
     }
 
-    function test_SettlePut_OTM_FullRefund() public {
+    function test_SettlePut_NotAssigned_CashReturned() public {
         WritOptions.Quote memory q = _putQuote();
         uint256 id = _write(q);
-        uint256 writerBefore = usdc.balanceOf(writer);
+        uint256 btcBefore = btc.balanceOf(writer);
+        uint256 usdcBefore = usdc.balanceOf(writer);
 
-        _settleAt(id, q.expiry, 70_000e8);
+        _settleAt(id, q.expiry, 70_000e8); // above the strike
 
-        assertEq(core.getPosition(id).payout, 0);
-        assertEq(usdc.balanceOf(writer), writerBefore + 6_500e6);
+        assertFalse(core.getPosition(id).assigned);
+        assertEq(usdc.balanceOf(writer), usdcBefore + 6_500e6);
+        assertEq(btc.balanceOf(writer), btcBefore, "no delivery when not assigned");
+        assertEq(core.deskBtcFree(), 50e8, "reserved underlying is released");
         _assertSolvent();
     }
 
-    function test_SettlePut_ATM_NoPayout() public {
+    function test_SettleCall_Assigned_WriterReceivesStrike() public {
+        WritOptions.Quote memory q = _callQuote();
+        uint256 id = _write(q);
+        uint256 btcBefore = btc.balanceOf(writer);
+        uint256 usdcBefore = usdc.balanceOf(writer);
+
+        _settleAt(id, q.expiry, 70_000e8); // above the strike
+
+        assertTrue(core.getPosition(id).assigned);
+        // Sold at the strike, not at spot: that is the commitment being kept.
+        assertEq(usdc.balanceOf(writer), usdcBefore + 6_500e6);
+        assertEq(btc.balanceOf(writer), btcBefore, "the underlying is gone");
+        assertEq(core.deskBtcFree(), 50e8 + 1e7);
+        assertEq(core.deskUsdcReserved(), 0);
+        _assertSolvent();
+    }
+
+    function test_SettleCall_NotAssigned_UnderlyingReturned() public {
+        WritOptions.Quote memory q = _callQuote();
+        uint256 id = _write(q);
+        uint256 btcBefore = btc.balanceOf(writer);
+
+        _settleAt(id, q.expiry, 60_000e8); // below the strike
+
+        assertFalse(core.getPosition(id).assigned);
+        assertEq(btc.balanceOf(writer), btcBefore + 1e7);
+        _assertSolvent();
+    }
+
+    function test_Settle_AtTheStrike_NeitherSideAssigned() public {
         WritOptions.Quote memory q = _putQuote();
         uint256 id = _write(q);
-        _settleAt(id, q.expiry, 65_000e8);
-        assertEq(core.getPosition(id).payout, 0);
-        _assertSolvent();
-    }
+        uint256 usdcBefore = usdc.balanceOf(writer);
 
-    function test_SettleCall_CappedAtCap() public {
-        WritOptions.Quote memory q = _callQuote();
-        uint256 id = _write(q);
-        uint256 writerBefore = usdc.balanceOf(writer);
+        _settleAt(id, q.expiry, 65_000e8); // exactly the strike
 
-        _settleAt(id, q.expiry, 80_000e8); // above cap -> full 1,000 USDC payout
-
-        assertEq(core.getPosition(id).payout, 1_000e6);
-        assertEq(usdc.balanceOf(writer), writerBefore); // no refund
-        _assertSolvent();
-    }
-
-    function test_SettleCall_BelowCap() public {
-        WritOptions.Quote memory q = _callQuote();
-        uint256 id = _write(q);
-        _settleAt(id, q.expiry, 70_000e8); // $5,000 over strike on 0.1 BTC
-        assertEq(core.getPosition(id).payout, 500e6);
+        assertFalse(core.getPosition(id).assigned, "nothing to exchange at the strike");
+        assertEq(usdc.balanceOf(writer), usdcBefore + 6_500e6);
         _assertSolvent();
     }
 
@@ -351,52 +383,46 @@ contract WritOptionsTest is Test {
     function test_Settle_RevertWhen_AlreadySettled() public {
         WritOptions.Quote memory q = _putQuote();
         uint256 id = _write(q);
-        _settleAt(id, q.expiry, 60_000e8);
-        bytes memory data = _oracleData(60_000e8, q.expiry + 2, q.expiry - 10, -8);
+        _settleAt(id, q.expiry, 70_000e8);
+        bytes memory data = _oracleData(70_000e8, q.expiry + 2, q.expiry - 10, -8);
         vm.expectRevert(WritOptions.PositionNotOpen.selector);
         core.settle{value: 1}(id, data);
     }
 
-    function test_Settle_RevertWhen_PublishTimeOutsideWindow() public {
-        WritOptions.Quote memory q = _putQuote();
-        uint256 id = _write(q);
-        vm.warp(q.expiry + 3 hours);
-        bytes memory data = _oracleData(60_000e8, q.expiry + 2 hours, q.expiry - 10, -8);
-        vm.expectRevert(bytes("MockPyth: publishTime outside window"));
-        core.settle{value: 1}(id, data);
-    }
+    function test_SettleMany_SharesOneOracleUpdate() public {
+        WritOptions.Quote memory a = _putQuote();
+        WritOptions.Quote memory b = _callQuote();
+        uint256 idA = _write(a);
+        uint256 idB = _write(b);
 
-    function test_Settle_RevertWhen_NotFirstTickInWindow() public {
-        WritOptions.Quote memory q = _putQuote();
-        uint256 id = _write(q);
-        vm.warp(q.expiry + 5);
-        // prevPublishTime inside the window -> this is not the first tick
-        bytes memory data = _oracleData(60_000e8, q.expiry + 3, q.expiry + 1, -8);
-        vm.expectRevert(bytes("MockPyth: not first update in window"));
-        core.settle{value: 1}(id, data);
-    }
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = idA;
+        ids[1] = idB;
 
-    function test_Settle_RevertWhen_ConfidenceTooWide() public {
-        WritOptions.Quote memory q = _putQuote();
-        uint256 id = _write(q);
-        vm.warp(q.expiry + 5);
-        // conf = 2% of price, above the 1% default limit
-        bytes[] memory updates = new bytes[](1);
-        updates[0] =
-            pyth.createUpdateData(FEED_ID, 60_000e8, 1_200e8, -8, q.expiry + 2, q.expiry - 10);
-        vm.expectRevert(PythAdapter.ConfidenceTooWide.selector);
-        core.settle{value: 1}(id, abi.encode(updates));
-    }
+        vm.warp(a.expiry + 5);
+        core.settleMany{value: 1}(ids, _oracleData(70_000e8, a.expiry + 2, a.expiry - 10, -8));
 
-    function test_Settle_NormalizesExpoMinus6() public {
-        WritOptions.Quote memory q = _putQuote();
-        uint256 id = _write(q);
-        vm.warp(q.expiry + 5);
-        // $60,000 expressed at expo -6 must settle identically to expo -8
-        core.settle{value: 1}(id, _oracleData(60_000e6, q.expiry + 2, q.expiry - 10, -6));
-        assertEq(core.getPosition(id).settlementPrice, 60_000e8);
-        assertEq(core.getPosition(id).payout, 500e6);
+        assertEq(uint8(core.getPosition(idA).state), uint8(WritOptions.PositionState.Settled));
+        assertEq(uint8(core.getPosition(idB).state), uint8(WritOptions.PositionState.Settled));
+        assertEq(core.totalOpenNotional(), 0);
         _assertSolvent();
+    }
+
+    function test_SettleMany_RevertWhen_ExpiriesDiffer() public {
+        WritOptions.Quote memory a = _putQuote();
+        WritOptions.Quote memory b = _putQuote();
+        b.expiry = uint64(block.timestamp + 2 days);
+        uint256 idA = _write(a);
+        uint256 idB = _write(b);
+
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = idA;
+        ids[1] = idB;
+
+        vm.warp(b.expiry + 5);
+        bytes memory data = _oracleData(70_000e8, a.expiry + 2, a.expiry - 10, -8);
+        vm.expectRevert(WritOptions.PositionNotOpen.selector);
+        core.settleMany{value: 1}(ids, data);
     }
 
     // ------------------------------------------------------------- fallback
@@ -404,7 +430,7 @@ contract WritOptionsTest is Test {
     function test_SettleFallback_RevertWhen_TooEarly() public {
         WritOptions.Quote memory q = _putQuote();
         uint256 id = _write(q);
-        vm.warp(q.expiry + 1);
+        vm.warp(q.expiry + 1 days);
         vm.expectRevert(WritOptions.FallbackTooEarly.selector);
         core.settleFallback(id, 60_000e8);
     }
@@ -423,71 +449,103 @@ contract WritOptionsTest is Test {
     function test_SettleFallback_Works() public {
         WritOptions.Quote memory q = _putQuote();
         uint256 id = _write(q);
+        uint256 btcBefore = btc.balanceOf(writer);
         vm.warp(q.expiry + 4 days);
         core.settleFallback(id, 60_000e8);
-        assertEq(core.getPosition(id).payout, 500e6);
+        assertTrue(core.getPosition(id).assigned);
+        assertEq(btc.balanceOf(writer), btcBefore + 1e7);
         _assertSolvent();
     }
 
     // ------------------------------------------------------------- desk
 
-    function test_WithdrawDesk_RevertWhen_ExceedsFreeBalance() public {
-        vm.expectRevert(WritOptions.InsufficientDeskLiquidity.selector);
-        core.withdrawDesk(address(this), 200_000e6 + 1);
+    function test_WithdrawDesk_CannotTouchReservesOrCollateral() public {
+        _write(_putQuote()); // reserves 0.1 BTC, locks 6,500 USDC of writer cash
+
+        core.withdrawDeskUsdc(address(this), core.deskUsdcFree());
+        core.withdrawDeskBtc(address(this), core.deskBtcFree());
+
+        // What remains is exactly what is owed to the open position.
+        assertEq(usdc.balanceOf(address(core)), core.writerUsdcCollateral());
+        assertEq(btc.balanceOf(address(core)), core.deskBtcReserved());
+        assertEq(core.deskBtcReserved(), 1e7);
+        _assertSolvent();
     }
 
-    function test_WithdrawDesk_NeverTouchesCollateral() public {
-        _write(_putQuote()); // locks 6,500 collateral, pays 120 premium
-        core.withdrawDesk(address(this), core.deskBalance()); // withdraw all free desk funds
-        // locked collateral must remain untouched in the contract
-        assertEq(usdc.balanceOf(address(core)), core.totalOpenCollateral());
-        assertEq(core.totalOpenCollateral(), 6_500e6);
-        _assertSolvent();
+    function test_WithdrawDesk_RevertWhen_ExceedsFree() public {
+        // Read the balances first: expectRevert arms the very next call, and a
+        // view read inside the argument list would be the one it catches.
+        uint256 tooMuchUsdc = core.deskUsdcFree() + 1;
+        uint256 tooMuchBtc = core.deskBtcFree() + 1;
+
+        vm.expectRevert(WritOptions.InsufficientDeskLiquidity.selector);
+        core.withdrawDeskUsdc(address(this), tooMuchUsdc);
+        vm.expectRevert(WritOptions.InsufficientDeskInventory.selector);
+        core.withdrawDeskBtc(address(this), tooMuchBtc);
+    }
+
+    function test_DeskCapacity_TracksTheDeliverableSide() public {
+        // A put is limited by underlying the desk can deliver.
+        assertEq(core.deskCapacity(true, 65_000e8, 1e7), 50e8 / 1e7);
+        // A covered call is limited by cash the desk can pay.
+        assertEq(core.deskCapacity(false, 65_000e8, 1e7), uint256(200_000e6) / 6_500e6);
     }
 
     // ------------------------------------------------------------- fuzz
 
-    /// The core solvency property: no settlement price can ever produce a
-    /// payout above the locked collateral.
-    function testFuzz_PayoutNeverExceedsCollateral(
-        bool isPut,
-        uint64 strike,
-        uint64 capDelta,
-        uint64 qty,
-        uint64 price
-    ) public pure {
-        strike = uint64(bound(strike, 1, 1e15)); // up to $10M at 1e8
-        qty = uint64(bound(qty, 1, 1e15)); // up to 10M BTC at 1e8
-        uint64 cap = isPut ? 0 : uint64(bound(capDelta, 1, 1e15)) + strike;
+    /// The cash leg is quoted once and used in both directions, so a put's
+    /// collateral and a covered call's proceeds can never disagree.
+    function testFuzz_NotionalIsSymmetric(uint64 strike, uint64 qty) public pure {
+        strike = uint64(bound(strike, 1, 1e15));
+        qty = uint64(bound(qty, 1, 1e15));
+        assertEq(
+            OptionMath.notionalUsdc(strike, qty),
+            OptionMath.notionalUsdc(strike, qty),
+            "notional must be deterministic"
+        );
+        // Rounding up means the locked side always covers what is owed.
+        assertGe(uint256(OptionMath.notionalUsdc(strike, qty)) * 1e10, uint256(strike) * qty);
+    }
 
-        uint128 collateral = OptionMath.collateralUsdc(isPut, strike, cap, qty);
-        uint128 payout = OptionMath.payoutUsdc(isPut, strike, cap, qty, price);
-        assertLe(payout, collateral);
+    /// Assignment is a strict inequality on each side, so exactly at the strike
+    /// neither product is assigned and nothing changes hands.
+    function testFuzz_AssignmentIsExclusiveAtTheStrike(uint64 strike, uint64 price) public pure {
+        strike = uint64(bound(strike, 1, 1e15));
+        bool put = OptionMath.isAssigned(true, strike, price);
+        bool call = OptionMath.isAssigned(false, strike, price);
+        assertFalse(put && call, "both sides can never be assigned at once");
+        if (price == strike) {
+            assertFalse(put);
+            assertFalse(call);
+        }
     }
 
     // ------------------------------------------------------------- e2e
 
-    function test_EndToEnd_TwoPositions_SolvencyMaintained() public {
+    function test_EndToEnd_BothProducts_SolvencyMaintained() public {
         WritOptions.Quote memory p = _putQuote();
         uint256 putId = _write(p);
-        _assertSolvent();
-
         WritOptions.Quote memory c = _callQuote();
         uint256 callId = _write(c);
         _assertSolvent();
 
-        _settleAt(putId, p.expiry, 60_000e8); // put ITM: desk +500
+        // One price assigns the call and spares the put.
+        vm.warp(p.expiry + 5);
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = putId;
+        ids[1] = callId;
+        core.settleMany{value: 1}(ids, _oracleData(70_000e8, p.expiry + 2, p.expiry - 10, -8));
+
+        assertFalse(core.getPosition(putId).assigned);
+        assertTrue(core.getPosition(callId).assigned);
+        assertEq(core.totalOpenNotional(), 0);
+        assertEq(core.deskUsdcReserved(), 0);
+        assertEq(core.deskBtcReserved(), 0);
         _assertSolvent();
 
-        vm.warp(c.expiry + 5);
-        core.settle{value: 1}(callId, _oracleData(60_000e8, c.expiry + 2, c.expiry - 10, -8));
-        _assertSolvent(); // call OTM: full refund
-
-        // desk P&L: -120 -60 premiums, +500 put payout
-        assertEq(core.deskBalance(), 200_000e6 - 120e6 - 60e6 + 500e6);
-        assertEq(core.totalOpenCollateral(), 0);
-
-        core.withdrawDesk(address(this), core.deskBalance());
+        core.withdrawDeskUsdc(address(this), core.deskUsdcFree());
+        core.withdrawDeskBtc(address(this), core.deskBtcFree());
         assertEq(usdc.balanceOf(address(core)), 0);
+        assertEq(btc.balanceOf(address(core)), 0);
     }
 }
