@@ -29,20 +29,26 @@ import {OptionMath} from "./libraries/OptionMath.sol";
 /// with neither the asset they wanted nor the price they set.
 ///
 /// Because delivery is real, the counterparty must already hold what it may owe.
-/// Writing an option reserves that side out of desk inventory, so a position can
-/// never be opened that the desk could not honour. Two invariants hold at all
-/// times, one per asset:
+/// Writing an option reserves that side out of the maker's own inventory, so a
+/// position can never be opened that its counterparty could not honour.
 ///
-///   usdc.balanceOf(this) == deskUsdcFree + deskUsdcReserved + writerUsdcCollateral
-///   btc.balanceOf(this)  == deskBtcFree  + deskBtcReserved  + writerBtcCollateral
+/// The protocol is not the counterparty. Makers hold their own balances here and
+/// sign their own quotes; this contract matches and settles between them and the
+/// writer, and never takes a side. One maker or twenty, the code path is the
+/// same. Two invariants hold at all times, one per asset:
+///
+///   usdc.balanceOf(this) == makerUsdcFree + makerUsdcReserved + writerUsdcCollateral
+///   btc.balanceOf(this)  == makerBtcFree  + makerBtcReserved  + writerBtcCollateral
 ///
 /// Pricing is off-chain (Black-Scholes over a vol surface); quotes are EIP-712
-/// signed by the desk's quote signer and verified here. Settlement reads the
-/// expiry price from a pluggable oracle adapter (Pyth first-tick-after-expiry).
+/// signed by the quoting maker and verified here. Settlement reads the expiry
+/// price from a pluggable oracle adapter (Pyth first-tick-after-expiry).
 ///
 /// MVP trust assumptions (documented, removed in later phases):
-///  - The quote signer prices fairly. It can only set premiums, never move
-///    collateral or inventory beyond the trade it signed.
+///  - Makers are allowlisted by the owner, so the set is permissioned even
+///    though the accounting is not.
+///  - A maker's signer prices that maker's own risk. It can only set premiums,
+///    never move collateral or another maker's inventory.
 ///  - After `fallbackDelay` past expiry the owner may settle with a manual
 ///    price, as an oracle-outage escape hatch.
 contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
@@ -58,6 +64,8 @@ contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
 
     struct Position {
         address writer;
+        /// @dev Whose inventory backs this position, and who it settles against.
+        address maker;
         bool isPut;
         uint64 strike; // USD, 1e8
         uint64 qty; // underlying, 1e8
@@ -73,6 +81,7 @@ contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
     /// @notice A desk quote authorizing one option write, EIP-712 signed by `quoteSigner`.
     struct Quote {
         address writer;
+        address maker;
         bool isPut;
         uint64 strike;
         uint64 qty;
@@ -83,7 +92,7 @@ contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
     }
 
     bytes32 public constant QUOTE_TYPEHASH = keccak256(
-        "Quote(address writer,bool isPut,uint64 strike,uint64 qty,uint64 expiry,uint128 premium,uint64 quoteDeadline,uint256 nonce)"
+        "Quote(address writer,address maker,bool isPut,uint64 strike,uint64 qty,uint64 expiry,uint128 premium,uint64 quoteDeadline,uint256 nonce)"
     );
 
     // ---------------------------------------------------------------- state
@@ -92,7 +101,19 @@ contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
     /// @notice The underlying that a covered call posts and a put delivers.
     IERC20 public immutable btc;
     IOracleAdapter public oracle;
-    address public quoteSigner;
+
+    /// @notice A counterparty's own book. Reserved amounts are already promised
+    /// to open positions and are not withdrawable.
+    struct MakerAccount {
+        address signer;
+        uint128 usdcFree;
+        uint128 usdcReserved;
+        uint128 btcFree;
+        uint128 btcReserved;
+        bool active;
+    }
+
+    mapping(address => MakerAccount) public makers;
 
     uint64 public minTenor = 20 minutes;
     uint64 public maxTenor = 30 days;
@@ -102,14 +123,12 @@ contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
     uint128 public maxPositionNotional = 100_000e6;
     uint128 public maxTotalNotional = 1_000_000e6;
 
-    /// @notice Desk USDC that can still be committed.
-    uint256 public deskUsdcFree;
-    /// @notice Desk USDC owed to open covered calls if they are assigned.
-    uint256 public deskUsdcReserved;
-    /// @notice Desk underlying that can still be committed.
-    uint256 public deskBtcFree;
-    /// @notice Desk underlying owed to open puts if they are assigned.
-    uint256 public deskBtcReserved;
+    /// @notice Totals across every maker. Kept alongside the per-maker books so
+    /// the solvency invariant can be checked without iterating the set.
+    uint256 public makerUsdcFree;
+    uint256 public makerUsdcReserved;
+    uint256 public makerBtcFree;
+    uint256 public makerBtcReserved;
 
     /// @notice USDC locked as collateral across open puts.
     uint256 public writerUsdcCollateral;
@@ -126,11 +145,15 @@ contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
 
     // ---------------------------------------------------------------- events
 
-    event DeskDeposited(address indexed from, bool isUsdc, uint256 amount);
-    event DeskWithdrawn(address indexed to, bool isUsdc, uint256 amount);
+    event MakerRegistered(address indexed maker, address indexed signer);
+    event MakerSignerUpdated(address indexed maker, address indexed signer);
+    event MakerActiveUpdated(address indexed maker, bool active);
+    event MakerDeposited(address indexed maker, bool isUsdc, uint256 amount);
+    event MakerWithdrawn(address indexed maker, address indexed to, bool isUsdc, uint256 amount);
     event OptionWritten(
         uint256 indexed id,
         address indexed writer,
+        address indexed maker,
         bool isPut,
         uint64 strike,
         uint64 qty,
@@ -146,7 +169,6 @@ contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
         uint128 intrinsicUsdc,
         bool viaFallback
     );
-    event QuoteSignerUpdated(address indexed signer);
     event OracleUpdated(address indexed oracle);
     event RiskParamsUpdated(
         uint64 minTenor,
@@ -165,6 +187,9 @@ contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
     error InvalidOptionParams();
     error ExpiryOutOfRange();
     error InvalidQuoteSignature();
+    error MakerNotActive();
+    error MakerAlreadyRegistered();
+    error NotMaker();
     error InvalidPremium();
     error PositionTooLarge();
     error ProtocolCapReached();
@@ -177,18 +202,16 @@ contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
 
     // ---------------------------------------------------------------- setup
 
-    constructor(address usdc_, address btc_, address oracle_, address quoteSigner_)
+    constructor(address usdc_, address btc_, address oracle_)
         EIP712("WritOptions", "1")
         Ownable(msg.sender)
     {
-        if (
-            usdc_ == address(0) || btc_ == address(0) || oracle_ == address(0)
-                || quoteSigner_ == address(0)
-        ) revert ZeroAddress();
+        if (usdc_ == address(0) || btc_ == address(0) || oracle_ == address(0)) {
+            revert ZeroAddress();
+        }
         usdc = IERC20(usdc_);
         btc = IERC20(btc_);
         oracle = IOracleAdapter(oracle_);
-        quoteSigner = quoteSigner_;
     }
 
     // ---------------------------------------------------------------- write
@@ -209,16 +232,21 @@ contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
         if (q.expiry < block.timestamp + minTenor || q.expiry > block.timestamp + maxTenor) {
             revert ExpiryOutOfRange();
         }
-        if (ECDSA.recover(hashQuote(q), signature) != quoteSigner) revert InvalidQuoteSignature();
+        MakerAccount storage m = makers[q.maker];
+        if (!m.active) revert MakerNotActive();
+        // Each maker signs for its own book, so one maker's signer can never
+        // commit another's inventory.
+        if (ECDSA.recover(hashQuote(q), signature) != m.signer) revert InvalidQuoteSignature();
 
         uint128 notional = OptionMath.notionalUsdc(q.strike, q.qty);
         if (q.premium == 0 || q.premium >= notional) revert InvalidPremium();
         if (notional > maxPositionNotional) revert PositionTooLarge();
         if (totalOpenNotional + notional > maxTotalNotional) revert ProtocolCapReached();
-        if (deskUsdcFree < q.premium) revert InsufficientDeskLiquidity();
+        if (m.usdcFree < q.premium) revert InsufficientDeskLiquidity();
 
         usedNonces[q.nonce] = true;
-        deskUsdcFree -= q.premium;
+        m.usdcFree -= q.premium;
+        makerUsdcFree -= q.premium;
         totalOpenNotional += notional;
 
         uint128 collateral = _openLegs(q, notional);
@@ -226,6 +254,7 @@ contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
         id = nextPositionId++;
         _positions[id] = Position({
             writer: msg.sender,
+            maker: q.maker,
             isPut: q.isPut,
             strike: q.strike,
             qty: q.qty,
@@ -241,27 +270,32 @@ contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
         usdc.safeTransfer(msg.sender, q.premium);
 
         emit OptionWritten(
-            id, msg.sender, q.isPut, q.strike, q.qty, q.expiry, collateral, q.premium
+            id, msg.sender, q.maker, q.isPut, q.strike, q.qty, q.expiry, collateral, q.premium
         );
     }
 
     /// @dev Pull the writer's collateral in and reserve the side the desk may owe.
     /// Split out of `writeOption` to keep the stack flat.
     function _openLegs(Quote calldata q, uint128 notional) internal returns (uint128 collateral) {
+        MakerAccount storage m = makers[q.maker];
         if (q.isPut) {
-            // Writer posts cash; the desk may have to deliver the underlying.
+            // Writer posts cash; the maker may have to deliver the underlying.
             collateral = notional;
-            if (deskBtcFree < q.qty) revert InsufficientDeskInventory();
-            deskBtcFree -= q.qty;
-            deskBtcReserved += q.qty;
+            if (m.btcFree < q.qty) revert InsufficientDeskInventory();
+            m.btcFree -= q.qty;
+            m.btcReserved += q.qty;
+            makerBtcFree -= q.qty;
+            makerBtcReserved += q.qty;
             writerUsdcCollateral += collateral;
             usdc.safeTransferFrom(msg.sender, address(this), collateral);
         } else {
-            // Writer posts the underlying; the desk may have to pay the strike.
+            // Writer posts the underlying; the maker may have to pay the strike.
             collateral = q.qty;
-            if (deskUsdcFree < notional) revert InsufficientDeskInventory();
-            deskUsdcFree -= notional;
-            deskUsdcReserved += notional;
+            if (m.usdcFree < notional) revert InsufficientDeskInventory();
+            m.usdcFree -= notional;
+            m.usdcReserved += notional;
+            makerUsdcFree -= notional;
+            makerUsdcReserved += notional;
             writerBtcCollateral += collateral;
             btc.safeTransferFrom(msg.sender, address(this), collateral);
         }
@@ -326,28 +360,36 @@ contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
         pos.assigned = assigned;
         totalOpenNotional -= notional;
 
+        MakerAccount storage m = makers[pos.maker];
+
         if (pos.isPut) {
             writerUsdcCollateral -= pos.collateral;
-            deskBtcReserved -= pos.qty;
+            m.btcReserved -= pos.qty;
+            makerBtcReserved -= pos.qty;
             if (assigned) {
-                // Writer buys at the strike: their cash goes to the desk, the
+                // Writer buys at the strike: their cash goes to the maker, the
                 // underlying goes to them.
-                deskUsdcFree += pos.collateral;
+                m.usdcFree += pos.collateral;
+                makerUsdcFree += pos.collateral;
                 btc.safeTransfer(pos.writer, pos.qty);
             } else {
-                deskBtcFree += pos.qty;
+                m.btcFree += pos.qty;
+                makerBtcFree += pos.qty;
                 usdc.safeTransfer(pos.writer, pos.collateral);
             }
         } else {
             writerBtcCollateral -= pos.collateral;
-            deskUsdcReserved -= notional;
+            m.usdcReserved -= notional;
+            makerUsdcReserved -= notional;
             if (assigned) {
-                // Writer sells at the strike: their underlying goes to the desk,
+                // Writer sells at the strike: their underlying goes to the maker,
                 // the cash comes to them.
-                deskBtcFree += pos.collateral;
+                m.btcFree += pos.collateral;
+                makerBtcFree += pos.collateral;
                 usdc.safeTransfer(pos.writer, notional);
             } else {
-                deskUsdcFree += notional;
+                m.usdcFree += notional;
+                makerUsdcFree += notional;
                 btc.safeTransfer(pos.writer, pos.collateral);
             }
         }
@@ -355,48 +397,80 @@ contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
         emit OptionSettled(id, pos.writer, price, assigned, intrinsic, viaFallback);
     }
 
-    // ---------------------------------------------------------------- desk
+    // --------------------------------------------------------------- makers
 
-    /// @notice Fund desk USDC: pays premiums and backs covered-call assignment.
-    function depositDeskUsdc(uint256 amount) external {
-        deskUsdcFree += amount;
+    /// @notice Allowlist a counterparty and the key that signs its quotes.
+    function registerMaker(address maker, address signer) external onlyOwner {
+        if (maker == address(0) || signer == address(0)) revert ZeroAddress();
+        if (makers[maker].signer != address(0)) revert MakerAlreadyRegistered();
+        makers[maker].signer = signer;
+        makers[maker].active = true;
+        emit MakerRegistered(maker, signer);
+        emit MakerActiveUpdated(maker, true);
+    }
+
+    /// @notice Rotate a maker's signing key. The maker may do this itself, so a
+    /// compromised quoting key does not need the owner to be awake.
+    function setMakerSigner(address maker, address signer) external {
+        if (msg.sender != maker && msg.sender != owner()) revert NotMaker();
+        if (signer == address(0)) revert ZeroAddress();
+        if (makers[maker].signer == address(0)) revert MakerNotActive();
+        makers[maker].signer = signer;
+        emit MakerSignerUpdated(maker, signer);
+    }
+
+    /// @notice Stop or resume a maker quoting. Open positions are unaffected:
+    /// their inventory is already reserved and still settles normally.
+    function setMakerActive(address maker, bool active) external onlyOwner {
+        if (makers[maker].signer == address(0)) revert MakerNotActive();
+        makers[maker].active = active;
+        emit MakerActiveUpdated(maker, active);
+    }
+
+    /// @notice Fund your own book. Makers hold their own balances here.
+    function depositMakerUsdc(uint256 amount) external {
+        MakerAccount storage m = makers[msg.sender];
+        if (m.signer == address(0)) revert NotMaker();
+        m.usdcFree += uint128(amount);
+        makerUsdcFree += amount;
         usdc.safeTransferFrom(msg.sender, address(this), amount);
-        emit DeskDeposited(msg.sender, true, amount);
+        emit MakerDeposited(msg.sender, true, amount);
     }
 
-    /// @notice Fund desk underlying: backs put assignment.
-    function depositDeskBtc(uint256 amount) external {
-        deskBtcFree += amount;
+    function depositMakerBtc(uint256 amount) external {
+        MakerAccount storage m = makers[msg.sender];
+        if (m.signer == address(0)) revert NotMaker();
+        m.btcFree += uint128(amount);
+        makerBtcFree += amount;
         btc.safeTransferFrom(msg.sender, address(this), amount);
-        emit DeskDeposited(msg.sender, false, amount);
+        emit MakerDeposited(msg.sender, false, amount);
     }
 
-    /// @notice Withdraw uncommitted desk USDC. Reserves and writer collateral
-    /// are not reachable: an open position's delivery is already spoken for.
-    function withdrawDeskUsdc(address to, uint256 amount) external onlyOwner {
+    /// @notice Withdraw your uncommitted balance. Reserves belong to open
+    /// positions and are unreachable until those settle.
+    function withdrawMakerUsdc(address to, uint256 amount) external {
+        MakerAccount storage m = makers[msg.sender];
+        if (m.signer == address(0)) revert NotMaker();
         if (to == address(0)) revert ZeroAddress();
-        if (amount > deskUsdcFree) revert InsufficientDeskLiquidity();
-        deskUsdcFree -= amount;
+        if (amount > m.usdcFree) revert InsufficientDeskLiquidity();
+        m.usdcFree -= uint128(amount);
+        makerUsdcFree -= amount;
         usdc.safeTransfer(to, amount);
-        emit DeskWithdrawn(to, true, amount);
+        emit MakerWithdrawn(msg.sender, to, true, amount);
     }
 
-    /// @notice Withdraw uncommitted desk underlying.
-    function withdrawDeskBtc(address to, uint256 amount) external onlyOwner {
+    function withdrawMakerBtc(address to, uint256 amount) external {
+        MakerAccount storage m = makers[msg.sender];
+        if (m.signer == address(0)) revert NotMaker();
         if (to == address(0)) revert ZeroAddress();
-        if (amount > deskBtcFree) revert InsufficientDeskInventory();
-        deskBtcFree -= amount;
+        if (amount > m.btcFree) revert InsufficientDeskInventory();
+        m.btcFree -= uint128(amount);
+        makerBtcFree -= amount;
         btc.safeTransfer(to, amount);
-        emit DeskWithdrawn(to, false, amount);
+        emit MakerWithdrawn(msg.sender, to, false, amount);
     }
 
     // ---------------------------------------------------------------- admin
-
-    function setQuoteSigner(address signer) external onlyOwner {
-        if (signer == address(0)) revert ZeroAddress();
-        quoteSigner = signer;
-        emit QuoteSignerUpdated(signer);
-    }
 
     function setOracle(address oracle_) external onlyOwner {
         if (oracle_ == address(0)) revert ZeroAddress();
@@ -442,6 +516,7 @@ contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
                 abi.encode(
                     QUOTE_TYPEHASH,
                     q.writer,
+                    q.maker,
                     q.isPut,
                     q.strike,
                     q.qty,
@@ -472,15 +547,17 @@ contract WritOptions is EIP712, Ownable, Pausable, ReentrancyGuard {
         return isPut ? OptionMath.notionalUsdc(strike, qty) : qty;
     }
 
-    /// @notice How many more of this option the desk can currently back.
-    /// @dev The binding limit is inventory on the side the desk may have to
+    /// @notice How many more of this option one maker can currently back.
+    /// @dev The binding limit is inventory on the side that maker may have to
     /// deliver, which is what the UI should show as remaining capacity.
-    function deskCapacity(bool isPut, uint64 strike, uint64 qty)
+    function makerCapacity(address maker, bool isPut, uint64 strike, uint64 qty)
         external
         view
         returns (uint256 positions)
     {
         if (qty == 0 || strike == 0) return 0;
-        return isPut ? deskBtcFree / qty : deskUsdcFree / OptionMath.notionalUsdc(strike, qty);
+        MakerAccount storage m = makers[maker];
+        if (!m.active) return 0;
+        return isPut ? m.btcFree / qty : m.usdcFree / OptionMath.notionalUsdc(strike, qty);
     }
 }

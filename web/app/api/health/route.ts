@@ -17,31 +17,32 @@ export async function GET() {
     ok: true,
     chainId: deskConfig.chainId,
     core: deskConfig.coreAddress,
+    maker: deskConfig.makerAddress,
     quoter: quoterAddress(),
     devKey: usingDevKey(),
   };
 
   try {
     const client = createPublicClient({ chain: giwaSepolia, transport: http() });
-    const read = (fn: "deskUsdcFree" | "deskBtcFree" | "totalOpenNotional") =>
+    const read = (fn: "makerUsdcFree" | "makerBtcFree" | "totalOpenNotional") =>
       client.readContract({
         abi: coreAbi,
         address: deskConfig.coreAddress,
         functionName: fn,
       }) as Promise<bigint>;
     const [deskBalance, deskBtc, openNotional] = await Promise.all([
-      read("deskUsdcFree"),
-      read("deskBtcFree"),
+      read("makerUsdcFree"),
+      read("makerBtcFree"),
       read("totalOpenNotional"),
     ]);
 
     const low = deskBalance < deskConfig.lowLiquidityUsdc;
     return NextResponse.json({
       ...base,
-      deskUsdcFree: deskBalance.toString(),
+      makerUsdcFree: deskBalance.toString(),
       // Physical settlement means a put can only be written if the desk can
       // actually deliver, so this is a real capacity limit, not a nicety.
-      deskBtcFree: deskBtc.toString(),
+      makerBtcFree: deskBtc.toString(),
       openNotionalUsdc: openNotional.toString(),
       lowLiquidity: low,
       ...(low && { warning: "desk liquidity below threshold — quotes may start failing" }),
@@ -50,7 +51,7 @@ export async function GET() {
     // The desk is still up even when the RPC is not; say so rather than 500.
     return NextResponse.json({
       ...base,
-      deskUsdcFree: null,
+      makerUsdcFree: null,
       readError: err instanceof Error ? err.message.split("\n")[0] : "rpc unreachable",
     });
   }

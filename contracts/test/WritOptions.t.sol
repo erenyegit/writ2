@@ -33,7 +33,8 @@ contract WritOptionsTest is Test {
         btc = new MockBTC();
         pyth = new MockPyth();
         adapter = new PythAdapter(address(pyth), FEED_ID);
-        core = new WritOptions(address(usdc), address(btc), address(adapter), quoter);
+        core = new WritOptions(address(usdc), address(btc), address(adapter));
+        core.registerMaker(address(this), quoter);
 
         // Physical settlement means the desk holds both sides: cash to buy a
         // covered call away, and the underlying to deliver into an assigned put.
@@ -41,8 +42,8 @@ contract WritOptionsTest is Test {
         btc.mint(address(this), 100e8);
         usdc.approve(address(core), type(uint256).max);
         btc.approve(address(core), type(uint256).max);
-        core.depositDeskUsdc(200_000e6);
-        core.depositDeskBtc(50e8);
+        core.depositMakerUsdc(200_000e6);
+        core.depositMakerBtc(50e8);
 
         usdc.mint(writer, 500_000e6);
         btc.mint(writer, 10e8);
@@ -61,6 +62,7 @@ contract WritOptionsTest is Test {
     function _putQuote() internal returns (WritOptions.Quote memory q) {
         q = WritOptions.Quote({
             writer: writer,
+            maker: address(this),
             isPut: true,
             strike: 65_000e8,
             qty: 1e7,
@@ -110,12 +112,12 @@ contract WritOptionsTest is Test {
     function _assertSolvent() internal view {
         assertEq(
             usdc.balanceOf(address(core)),
-            core.deskUsdcFree() + core.deskUsdcReserved() + core.writerUsdcCollateral(),
+            core.makerUsdcFree() + core.makerUsdcReserved() + core.writerUsdcCollateral(),
             "usdc solvency invariant broken"
         );
         assertEq(
             btc.balanceOf(address(core)),
-            core.deskBtcFree() + core.deskBtcReserved() + core.writerBtcCollateral(),
+            core.makerBtcFree() + core.makerBtcReserved() + core.writerBtcCollateral(),
             "btc solvency invariant broken"
         );
     }
@@ -124,20 +126,18 @@ contract WritOptionsTest is Test {
 
     function test_Constructor_RevertZeroAddress() public {
         vm.expectRevert(WritOptions.ZeroAddress.selector);
-        new WritOptions(address(0), address(btc), address(adapter), quoter);
+        new WritOptions(address(0), address(btc), address(adapter));
         vm.expectRevert(WritOptions.ZeroAddress.selector);
-        new WritOptions(address(usdc), address(0), address(adapter), quoter);
+        new WritOptions(address(usdc), address(0), address(adapter));
         vm.expectRevert(WritOptions.ZeroAddress.selector);
-        new WritOptions(address(usdc), address(btc), address(0), quoter);
-        vm.expectRevert(WritOptions.ZeroAddress.selector);
-        new WritOptions(address(usdc), address(btc), address(adapter), address(0));
+        new WritOptions(address(usdc), address(btc), address(0));
     }
 
     // ------------------------------------------------------------- write
 
     function test_WritePut_LocksCashAndReservesUnderlying() public {
         uint256 usdcBefore = usdc.balanceOf(writer);
-        uint256 btcFreeBefore = core.deskBtcFree();
+        uint256 btcFreeBefore = core.makerBtcFree();
 
         uint256 id = _write(_putQuote());
 
@@ -149,14 +149,14 @@ contract WritOptionsTest is Test {
         assertEq(usdc.balanceOf(writer), usdcBefore - 6_500e6 + 120e6);
         assertEq(core.writerUsdcCollateral(), 6_500e6);
         // The desk may have to deliver, so that underlying is no longer free.
-        assertEq(core.deskBtcFree(), btcFreeBefore - 1e7);
-        assertEq(core.deskBtcReserved(), 1e7);
+        assertEq(core.makerBtcFree(), btcFreeBefore - 1e7);
+        assertEq(core.makerBtcReserved(), 1e7);
         _assertSolvent();
     }
 
     function test_WriteCoveredCall_LocksUnderlyingAndReservesCash() public {
         uint256 btcBefore = btc.balanceOf(writer);
-        uint256 usdcFreeBefore = core.deskUsdcFree();
+        uint256 usdcFreeBefore = core.makerUsdcFree();
 
         uint256 id = _write(_callQuote());
 
@@ -167,13 +167,13 @@ contract WritOptionsTest is Test {
         assertEq(btc.balanceOf(writer), btcBefore - 1e7);
         assertEq(core.writerBtcCollateral(), 1e7);
         // 6,500 reserved to buy it away, and 90 already paid out as premium.
-        assertEq(core.deskUsdcFree(), usdcFreeBefore - 6_500e6 - 90e6);
-        assertEq(core.deskUsdcReserved(), 6_500e6);
+        assertEq(core.makerUsdcFree(), usdcFreeBefore - 6_500e6 - 90e6);
+        assertEq(core.makerUsdcReserved(), 6_500e6);
         _assertSolvent();
     }
 
     function test_WritePut_RevertWhen_DeskCannotDeliverUnderlying() public {
-        core.withdrawDeskBtc(address(this), core.deskBtcFree());
+        core.withdrawMakerBtc(address(this), core.makerBtcFree());
         WritOptions.Quote memory q = _putQuote();
         bytes memory sig = _sign(q);
         vm.prank(writer);
@@ -182,7 +182,7 @@ contract WritOptionsTest is Test {
     }
 
     function test_WriteCall_RevertWhen_DeskCannotPayStrike() public {
-        core.withdrawDeskUsdc(address(this), core.deskUsdcFree() - 100e6);
+        core.withdrawMakerUsdc(address(this), core.makerUsdcFree() - 100e6);
         WritOptions.Quote memory q = _callQuote();
         bytes memory sig = _sign(q);
         vm.prank(writer);
@@ -311,8 +311,8 @@ contract WritOptionsTest is Test {
         // The writer bought at the price they named: cash out, underlying in.
         assertEq(btc.balanceOf(writer), btcBefore + 1e7);
         assertEq(usdc.balanceOf(writer), usdcBefore, "no cash comes back on assignment");
-        assertEq(core.deskUsdcFree(), 200_000e6 - 120e6 + 6_500e6);
-        assertEq(core.deskBtcReserved(), 0);
+        assertEq(core.makerUsdcFree(), 200_000e6 - 120e6 + 6_500e6);
+        assertEq(core.makerBtcReserved(), 0);
         _assertSolvent();
     }
 
@@ -327,7 +327,7 @@ contract WritOptionsTest is Test {
         assertFalse(core.getPosition(id).assigned);
         assertEq(usdc.balanceOf(writer), usdcBefore + 6_500e6);
         assertEq(btc.balanceOf(writer), btcBefore, "no delivery when not assigned");
-        assertEq(core.deskBtcFree(), 50e8, "reserved underlying is released");
+        assertEq(core.makerBtcFree(), 50e8, "reserved underlying is released");
         _assertSolvent();
     }
 
@@ -343,8 +343,8 @@ contract WritOptionsTest is Test {
         // Sold at the strike, not at spot: that is the commitment being kept.
         assertEq(usdc.balanceOf(writer), usdcBefore + 6_500e6);
         assertEq(btc.balanceOf(writer), btcBefore, "the underlying is gone");
-        assertEq(core.deskBtcFree(), 50e8 + 1e7);
-        assertEq(core.deskUsdcReserved(), 0);
+        assertEq(core.makerBtcFree(), 50e8 + 1e7);
+        assertEq(core.makerUsdcReserved(), 0);
         _assertSolvent();
     }
 
@@ -462,33 +462,166 @@ contract WritOptionsTest is Test {
     function test_WithdrawDesk_CannotTouchReservesOrCollateral() public {
         _write(_putQuote()); // reserves 0.1 BTC, locks 6,500 USDC of writer cash
 
-        core.withdrawDeskUsdc(address(this), core.deskUsdcFree());
-        core.withdrawDeskBtc(address(this), core.deskBtcFree());
+        core.withdrawMakerUsdc(address(this), core.makerUsdcFree());
+        core.withdrawMakerBtc(address(this), core.makerBtcFree());
 
         // What remains is exactly what is owed to the open position.
         assertEq(usdc.balanceOf(address(core)), core.writerUsdcCollateral());
-        assertEq(btc.balanceOf(address(core)), core.deskBtcReserved());
-        assertEq(core.deskBtcReserved(), 1e7);
+        assertEq(btc.balanceOf(address(core)), core.makerBtcReserved());
+        assertEq(core.makerBtcReserved(), 1e7);
         _assertSolvent();
     }
 
     function test_WithdrawDesk_RevertWhen_ExceedsFree() public {
         // Read the balances first: expectRevert arms the very next call, and a
         // view read inside the argument list would be the one it catches.
-        uint256 tooMuchUsdc = core.deskUsdcFree() + 1;
-        uint256 tooMuchBtc = core.deskBtcFree() + 1;
+        uint256 tooMuchUsdc = core.makerUsdcFree() + 1;
+        uint256 tooMuchBtc = core.makerBtcFree() + 1;
 
         vm.expectRevert(WritOptions.InsufficientDeskLiquidity.selector);
-        core.withdrawDeskUsdc(address(this), tooMuchUsdc);
+        core.withdrawMakerUsdc(address(this), tooMuchUsdc);
         vm.expectRevert(WritOptions.InsufficientDeskInventory.selector);
-        core.withdrawDeskBtc(address(this), tooMuchBtc);
+        core.withdrawMakerBtc(address(this), tooMuchBtc);
     }
 
-    function test_DeskCapacity_TracksTheDeliverableSide() public {
-        // A put is limited by underlying the desk can deliver.
-        assertEq(core.deskCapacity(true, 65_000e8, 1e7), 50e8 / 1e7);
-        // A covered call is limited by cash the desk can pay.
-        assertEq(core.deskCapacity(false, 65_000e8, 1e7), uint256(200_000e6) / 6_500e6);
+    function test_MakerCapacity_TracksTheDeliverableSide() public view {
+        // A put is limited by underlying the maker can deliver.
+        assertEq(core.makerCapacity(address(this), true, 65_000e8, 1e7), 50e8 / 1e7);
+        // A covered call is limited by cash the maker can pay.
+        assertEq(core.makerCapacity(address(this), false, 65_000e8, 1e7), uint256(200_000e6) / 6_500e6);
+    }
+
+    // ------------------------------------------------------------- makers
+
+    uint256 constant MAKER_B_PK = 0xB0BB1E;
+
+    /// Register a second maker with its own signer and its own inventory.
+    function _secondMaker() internal returns (address maker, uint256 signerPk) {
+        signerPk = MAKER_B_PK;
+        maker = makeAddr("makerB");
+        core.registerMaker(maker, vm.addr(signerPk));
+
+        usdc.mint(maker, 100_000e6);
+        btc.mint(maker, 20e8);
+        vm.startPrank(maker);
+        usdc.approve(address(core), type(uint256).max);
+        btc.approve(address(core), type(uint256).max);
+        core.depositMakerUsdc(100_000e6);
+        core.depositMakerBtc(20e8);
+        vm.stopPrank();
+    }
+
+    function _writeAgainst(address maker, uint256 signerPk, bool isPut)
+        internal
+        returns (uint256 id)
+    {
+        WritOptions.Quote memory q = isPut ? _putQuote() : _callQuote();
+        q.maker = maker;
+        (uint8 v, bytes32 r, bytes32 sg) = vm.sign(signerPk, core.hashQuote(q));
+        vm.prank(writer);
+        id = core.writeOption(q, abi.encodePacked(r, sg, v));
+    }
+
+    function test_Makers_OneGoingQuietDoesNotStopTheOther() public {
+        (address makerB, uint256 pkB) = _secondMaker();
+
+        core.setMakerActive(address(this), false);
+
+        // The first maker can no longer quote...
+        WritOptions.Quote memory q = _putQuote();
+        bytes memory sig = _sign(q);
+        vm.prank(writer);
+        vm.expectRevert(WritOptions.MakerNotActive.selector);
+        core.writeOption(q, sig);
+
+        // ...and the market keeps working through the other one.
+        uint256 id = _writeAgainst(makerB, pkB, true);
+        assertEq(core.getPosition(id).maker, makerB);
+        _assertSolvent();
+    }
+
+    function test_Makers_ReserveIsRingFencedPerMaker() public {
+        (address makerB, uint256 pkB) = _secondMaker();
+        _writeAgainst(makerB, pkB, true); // reserves 0.1 BTC of B's inventory
+
+        (, , , uint128 btcFreeB, uint128 btcReservedB,) = core.makers(makerB);
+        (, , , uint128 btcFreeA, uint128 btcReservedA,) = core.makers(address(this));
+
+        assertEq(btcReservedB, 1e7, "B backs its own position");
+        assertEq(btcReservedA, 0, "A is untouched by B's trade");
+        assertEq(btcFreeB, 20e8 - 1e7);
+        assertEq(btcFreeA, 50e8);
+        _assertSolvent();
+    }
+
+    function test_Makers_SignerCannotQuoteForAnother() public {
+        (address makerB,) = _secondMaker();
+
+        // A's signer, B's name on the quote.
+        WritOptions.Quote memory q = _putQuote();
+        q.maker = makerB;
+        bytes memory sig = _sign(q);
+        vm.prank(writer);
+        vm.expectRevert(WritOptions.InvalidQuoteSignature.selector);
+        core.writeOption(q, sig);
+    }
+
+    function test_Makers_WithdrawCannotReachAnotherMakersBalance() public {
+        (address makerB, uint256 pkB) = _secondMaker();
+        _writeAgainst(makerB, pkB, false); // reserves 6,500 USDC of B's cash
+
+        // B may take out only what is still free on its own book.
+        vm.prank(makerB);
+        vm.expectRevert(WritOptions.InsufficientDeskLiquidity.selector);
+        core.withdrawMakerUsdc(makerB, 100_000e6);
+
+        vm.prank(makerB);
+        core.withdrawMakerUsdc(makerB, 100_000e6 - 6_500e6 - 90e6);
+        _assertSolvent();
+    }
+
+    function test_Makers_RevertWhen_NotRegistered() public {
+        address stranger = makeAddr("stranger");
+        usdc.mint(stranger, 1_000e6);
+        vm.startPrank(stranger);
+        usdc.approve(address(core), type(uint256).max);
+        vm.expectRevert(WritOptions.NotMaker.selector);
+        core.depositMakerUsdc(1_000e6);
+        vm.stopPrank();
+    }
+
+    function test_Makers_SignerRotation() public {
+        uint256 newPk = 0xFEED;
+        core.setMakerSigner(address(this), vm.addr(newPk));
+
+        // The old key stops working immediately.
+        WritOptions.Quote memory q = _putQuote();
+        bytes memory old = _sign(q);
+        vm.prank(writer);
+        vm.expectRevert(WritOptions.InvalidQuoteSignature.selector);
+        core.writeOption(q, old);
+
+        (uint8 v, bytes32 r, bytes32 sg) = vm.sign(newPk, core.hashQuote(q));
+        vm.prank(writer);
+        core.writeOption(q, abi.encodePacked(r, sg, v));
+        _assertSolvent();
+    }
+
+    function test_Makers_InvariantHoldsAcrossBothBooks() public {
+        (address makerB, uint256 pkB) = _secondMaker();
+        WritOptions.Quote memory a = _putQuote();
+        _write(a); // against maker A
+        _writeAgainst(makerB, pkB, false); // against maker B
+        _assertSolvent();
+
+        vm.warp(a.expiry + 5);
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = 1;
+        ids[1] = 2;
+        core.settleMany{value: 1}(ids, _oracleData(70_000e8, a.expiry + 2, a.expiry - 10, -8));
+        _assertSolvent();
+        assertEq(core.makerUsdcReserved(), 0);
+        assertEq(core.makerBtcReserved(), 0);
     }
 
     // ------------------------------------------------------------- fuzz
@@ -539,12 +672,12 @@ contract WritOptionsTest is Test {
         assertFalse(core.getPosition(putId).assigned);
         assertTrue(core.getPosition(callId).assigned);
         assertEq(core.totalOpenNotional(), 0);
-        assertEq(core.deskUsdcReserved(), 0);
-        assertEq(core.deskBtcReserved(), 0);
+        assertEq(core.makerUsdcReserved(), 0);
+        assertEq(core.makerBtcReserved(), 0);
         _assertSolvent();
 
-        core.withdrawDeskUsdc(address(this), core.deskUsdcFree());
-        core.withdrawDeskBtc(address(this), core.deskBtcFree());
+        core.withdrawMakerUsdc(address(this), core.makerUsdcFree());
+        core.withdrawMakerBtc(address(this), core.makerBtcFree());
         assertEq(usdc.balanceOf(address(core)), 0);
         assertEq(btc.balanceOf(address(core)), 0);
     }

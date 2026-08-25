@@ -29,6 +29,7 @@ const domain = {
 const types = {
   Quote: [
     { name: "writer", type: "address" },
+    { name: "maker", type: "address" },
     { name: "isPut", type: "bool" },
     { name: "strike", type: "uint64" },
     { name: "qty", type: "uint64" },
@@ -82,6 +83,7 @@ export async function buildSignedQuote(req: QuoteRequest, spot: number) {
 
   const quote = {
     writer: req.writer,
+    maker: deskConfig.makerAddress,
     isPut: req.isPut,
     strike,
     qty,
@@ -101,6 +103,7 @@ export async function buildSignedQuote(req: QuoteRequest, spot: number) {
   return {
     quote: {
       writer: quote.writer,
+      maker: quote.maker,
       isPut: quote.isPut,
       strike: quote.strike.toString(),
       qty: quote.qty.toString(),
@@ -131,6 +134,7 @@ export async function buildSignedQuote(req: QuoteRequest, spot: number) {
       aprPct:
         (Number(premium) / 1e6 / (req.isPut ? (Number(notional) / 1e6) : req.qtyBtc * spot) / T) *
         100,
+      maker: deskConfig.makerAddress,
       quoter: quoterAddress(),
     },
   };

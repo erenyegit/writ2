@@ -62,6 +62,13 @@ export const deskConfig = {
   /** Short-lived quotes: GIWA preconfirms in ~200ms, so the desk only
    * needs a 20s window instead of 60s — less stale-price risk priced in. */
   quoteTtlSec: Number(process.env.QUOTE_TTL_SEC ?? 20),
-  /** Warn when free desk liquidity drops below this (USDC, 1e6). */
+  /**
+   * The maker account this desk instance quotes for. Its signer is
+   * QUOTER_PRIVATE_KEY; the contract checks the pair, so a misconfigured maker
+   * simply cannot write rather than writing against someone else's book.
+   */
+  makerAddress: (process.env.MAKER_ADDRESS ??
+    "0x0000000000000000000000000000000000000000") as `0x${string}`,
+  /** Warn when free maker liquidity drops below this (USDC, 1e6). */
   lowLiquidityUsdc: BigInt(process.env.LOW_LIQUIDITY_USDC ?? 100_000_000),
 };

@@ -28,10 +28,21 @@ chain.
 
 ## Products
 
-| Product | Writer locks | Max payout | Pays at expiry |
+| Product | Writer locks | Below the strike | Above the strike |
 | --- | --- | --- | --- |
-| Cash-secured put | `strike × qty` | `strike × qty` | `max(strike − S, 0) × qty` |
-| Capped call (call spread) | `(cap − strike) × qty` | `(cap − strike) × qty` | `min(max(S − strike, 0), cap − strike) × qty` |
+| Cash-secured put | `strike × qty` USDC | buys `qty` BTC at the strike | cash returned |
+| Covered call | `qty` BTC | BTC returned | sells `qty` BTC at the strike |
+
+Settlement is physical. At expiry an option is either out of the money, and every
+leg goes back where it came from, or assigned, and the two sides swap in full at
+the strike. There is no partial payout, because the promise is a price rather
+than a difference: a writer who says "I would buy at 60,000" gets BTC at 60,000,
+not a smaller balance.
+
+The protocol is not the counterparty. Makers hold their own balances in the
+contract and sign their own quotes; writing reserves the side that maker may owe,
+so no position can be opened that its counterparty could not honour. One maker
+or twenty, the code path is identical.
 
 Premiums are quoted off-chain by a Black-Scholes desk engine, signed as EIP-712 typed
 data, and verified on-chain — the desk can only set premiums, never touch collateral

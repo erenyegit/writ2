@@ -209,6 +209,7 @@ export default function TradePage() {
       args: [
         {
           writer: q.writer,
+          maker: q.maker,
           isPut: q.isPut,
           strike: BigInt(q.strike),
           qty: BigInt(q.qty),

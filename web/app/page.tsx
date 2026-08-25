@@ -57,8 +57,8 @@ export default function EarnPage() {
 
   const { data: deskStats } = useReadContracts({
     contracts: [
-      { abi: coreAbi, address: CORE_ADDRESS, functionName: "deskUsdcFree" },
-      { abi: coreAbi, address: CORE_ADDRESS, functionName: "deskBtcFree" },
+      { abi: coreAbi, address: CORE_ADDRESS, functionName: "makerUsdcFree" },
+      { abi: coreAbi, address: CORE_ADDRESS, functionName: "makerBtcFree" },
     ],
     query: { enabled: isConfigured(), refetchInterval: 15_000 },
   });
@@ -106,7 +106,7 @@ export default function EarnPage() {
       {/* ------------------------------------------------------------ stats */}
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-hairline bg-ink-700/70 shadow-soft lg:grid-cols-4">
         {[
-          ["testnet desk liquidity", deskBalance !== undefined ? fmtUsdc(deskBalance) : "—"],
+          ["testnet maker liquidity", deskBalance !== undefined ? fmtUsdc(deskBalance) : "—"],
           // Settlement is physical, so the desk's underlying is a real capacity
           // limit on puts: it can only sell you a put it could deliver into.
           ["testnet btc inventory", deskBtc !== undefined ? `${Number(deskBtc) / 1e8} btc` : "—"],

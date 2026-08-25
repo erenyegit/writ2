@@ -5,6 +5,7 @@ const quoteTuple = {
   type: "tuple",
   components: [
     { name: "writer", type: "address" },
+    { name: "maker", type: "address" },
     { name: "isPut", type: "bool" },
     { name: "strike", type: "uint64" },
     { name: "qty", type: "uint64" },
@@ -57,6 +58,7 @@ export const coreAbi = [
         type: "tuple",
         components: [
           { name: "writer", type: "address" },
+          { name: "maker", type: "address" },
           { name: "isPut", type: "bool" },
           { name: "strike", type: "uint64" },
           { name: "qty", type: "uint64" },
@@ -79,19 +81,20 @@ export const coreAbi = [
   },
   {
     type: "function",
-    name: "deskCapacity",
+    name: "makerCapacity",
     stateMutability: "view",
     inputs: [
+      { name: "maker", type: "address" },
       { name: "isPut", type: "bool" },
       { name: "strike", type: "uint64" },
       { name: "qty", type: "uint64" },
     ],
     outputs: [{ name: "positions", type: "uint256" }],
   },
-  view("deskUsdcFree"),
-  view("deskUsdcReserved"),
-  view("deskBtcFree"),
-  view("deskBtcReserved"),
+  view("makerUsdcFree"),
+  view("makerUsdcReserved"),
+  view("makerBtcFree"),
+  view("makerBtcReserved"),
   view("writerUsdcCollateral"),
   view("writerBtcCollateral"),
   view("totalOpenNotional"),
@@ -120,6 +123,7 @@ export const faucetAbi = [
 
 export interface OnchainPosition {
   writer: `0x${string}`;
+  maker: `0x${string}`;
   isPut: boolean;
   strike: bigint;
   qty: bigint;

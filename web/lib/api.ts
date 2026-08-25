@@ -16,6 +16,7 @@ export interface Market {
 export interface SignedQuote {
   quote: {
     writer: `0x${string}`;
+    maker: `0x${string}`;
     isPut: boolean;
     strike: string;
     qty: string;
@@ -37,6 +38,7 @@ export interface SignedQuote {
     notionalUsdc: string;
     aprPct: number;
     deskSpread: number;
+    maker: `0x${string}`;
     quoter: `0x${string}`;
   };
 }

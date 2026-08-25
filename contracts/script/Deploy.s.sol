@@ -20,7 +20,7 @@ import {PythAdapter} from "../src/adapters/PythAdapter.sol";
 ///   DEPLOYER_PRIVATE_KEY  deployer key (fund via https://faucet.lambda256.io/giwa-sepolia)
 ///   PYTH_ADDRESS          0x2880aB155794e7179c9eE2e38200202908C17B43 (GIWA Sepolia)
 ///   BTC_USD_FEED_ID       0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43
-///   QUOTE_SIGNER          address of the pricing service's signer key
+///   QUOTE_SIGNER          address that signs the first maker's quotes
 ///
 /// Run:
 ///   forge script script/Deploy.s.sol --rpc-url giwa_sepolia --broadcast
@@ -37,16 +37,19 @@ contract Deploy is Script {
         TestUSDC usdc = new TestUSDC();
         TestBTC btc = new TestBTC();
         PythAdapter adapter = new PythAdapter(pythAddr, feedId);
-        WritOptions core =
-            new WritOptions(address(usdc), address(btc), address(adapter), quoteSigner);
+        WritOptions core = new WritOptions(address(usdc), address(btc), address(adapter));
 
-        // Seed both sides: without inventory the desk cannot back either product.
+        // The deployer is the first maker. Nothing about the code path is
+        // special to it: registering a second maker is the same three calls.
+        core.registerMaker(deployer, quoteSigner);
+
+        // Seed both sides: without inventory a maker cannot back either product.
         usdc.faucet();
         btc.faucet();
         usdc.approve(address(core), type(uint256).max);
         btc.approve(address(core), type(uint256).max);
-        core.depositDeskUsdc(usdc.balanceOf(deployer));
-        core.depositDeskBtc(btc.balanceOf(deployer));
+        core.depositMakerUsdc(usdc.balanceOf(deployer));
+        core.depositMakerBtc(btc.balanceOf(deployer));
         vm.stopBroadcast();
 
         console2.log("TestUSDC:    ", address(usdc));
