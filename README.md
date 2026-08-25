@@ -113,6 +113,17 @@ a quote the contract accepts.
 Test USDC is self-serve: the trade page has a **claim** button (2,000 per 8h per
 address), so anyone can try the demo without asking for funds.
 
+### Current deployment (GIWA Sepolia)
+
+| Contract | Address |
+| --- | --- |
+| WritOptions | `0xd2f64c2fd06AA6B8c295d7C37CE6459D89B4f7B0` |
+| PythAdapter | `0x484E61922DDc7E8f23586fC3B37a6206fcA8DCC6` |
+| TestUSDC | `0x0b76264Bb1eD80e5FB219828464d0C809567e309` |
+| TestBTC | `0xD23c5fA0f4029874be6338fdaDC66e81709DAbFf` |
+
+All four are verified with source on `sepolia-explorer.giwa.io`.
+
 ## Design notes
 
 **Scales.** Prices and quantities use 1e8 (Pyth-native for BTC/USD); the settlement

@@ -26,6 +26,9 @@ export interface SignedQuote {
     nonce: string;
   };
   signature: `0x${string}`;
+  /** Populated by /api/rfq: how many makers answered, and how many were asked. */
+  competingBids?: number;
+  makersAsked?: number;
   meta: {
     spotUsd: number;
     ivAnnualized: number;
@@ -63,7 +66,7 @@ export async function getQuote(params: {
     qty: String(params.qty),
     expiry: String(params.expiry),
   });
-  const res = await fetch(`/api/quote?${q.toString()}`);
+  const res = await fetch(`/api/rfq?${q.toString()}`);
   const body = await res.json();
   if (!res.ok) throw new Error(body.error ?? `quote: ${res.status}`);
   return body;

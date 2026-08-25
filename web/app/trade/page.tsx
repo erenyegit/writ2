@@ -434,6 +434,12 @@ export default function TradePage() {
                     v={`${(quote.meta.ivAnnualized * 100).toFixed(1)}%`}
                   />
                   <Row k="quote expires" v={fmtTs(Number(quote.quote.quoteDeadline))} />
+                  {quote.competingBids !== undefined && (
+                    <Row
+                      k="best of"
+                      v={`${quote.competingBids} of ${quote.makersAsked} makers`}
+                    />
+                  )}
                   {collateralBalance !== undefined && (
                     <Row
                       k={`your ${collateralToken.symbol}`}
