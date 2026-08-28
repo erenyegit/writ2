@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Writ — Technical One-Pager</title>
+<style>
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 10.5pt; line-height: 1.45;
+         color: #16202e; max-width: 760px; margin: 24px auto; padding: 0 16px; }
+  h1 { font-size: 22pt; margin: 0 0 2px; letter-spacing: -0.3px; }
+  .sub { font-size: 11pt; color: #4a5568; margin-bottom: 10px; }
+  h2 { font-size: 11.5pt; margin: 18px 0 6px; padding-bottom: 3px;
+       border-bottom: 1.5px solid #16202e; }
+  p { margin: 0 0 8px; }
+  ul { margin: 0 0 8px 0; padding-left: 20px; }
+  li { margin-bottom: 4px; }
+  table { border-collapse: collapse; width: 100%; margin: 6px 0 10px; }
+  td, th { border: 1px solid #ccd3de; padding: 5px 8px; font-size: 10pt;
+           vertical-align: top; text-align: left; }
+  th { background: #eef1f6; font-weight: bold; }
+  td.k { font-weight: bold; width: 26%; }
+  .mono { font-family: "Courier New", monospace; font-size: 9.5pt; }
+  .band { background: #16202e; color: #ffffff; padding: 12px 14px; margin: 12px 0; }
+  .band h3 { color: #ffffff; margin: 0 0 6px; font-size: 12.5pt; }
+  .band p { color: #dbe2ee; margin-bottom: 6px; }
+  .band b { color: #ffffff; }
+  .band .lbl { color: #8fa6d4; font-size: 9.5pt; font-weight: bold;
+               letter-spacing: 1px; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+
+<h1>Writ</h1>
+<div class="sub">Physically settled BTC options, fully collateralized, on GIWA</div>
+
+<table>
+  <tr><td class="k">Live demo</td><td class="mono">https://writ2.vercel.app</td></tr>
+  <tr><td class="k">Source code</td><td class="mono">https://github.com/erenyegit/writ2</td></tr>
+  <tr><td class="k">Network</td><td class="mono">GIWA Sepolia · chain 91342</td></tr>
+</table>
+
+<p>Writ is an options desk built for income rather than leverage. A user sells a cash-secured put
+or a covered call and <b>receives the premium immediately</b>. Every position is collateralized at
+its full notional, so there are <b>no liquidations, no margin calls and no pooled risk</b> between
+writers. Expiry settles against the first Pyth price at or after the expiry timestamp, which no
+party can influence by choosing when to claim.</p>
+
+<h2>Two products</h2>
+<table>
+  <tr><th style="width:22%">Product</th><th>Writer locks</th><th>If the price comes</th></tr>
+  <tr><td class="k">Cash-secured put</td><td><span class="mono">strike × size</span> USDC</td>
+      <td>buys BTC at the strike</td></tr>
+  <tr><td class="k">Covered call</td><td><span class="mono">size</span> in BTC</td>
+      <td>sells BTC at the strike</td></tr>
+</table>
+
+<h2>Physical settlement is the product</h2>
+<p>A cash-settled option pays a difference, which is not what the writer asked for. Someone who
+says <i>"I would buy BTC at $74,000"</i> and sees it finish at $70,000 gets a smaller balance from a
+cash-settled desk. Writ gives them <b>BTC, at $74,000</b> — the price they named, plus the premium
+they were already paid.</p>
+<p>At expiry an option is either out of the money, and every leg returns to where it came from, or
+assigned, and the two sides swap <b>in full</b> at the strike. There is no partial payout, because
+no difference is being settled.</p>
+
+<h2>A venue, not a house</h2>
+<ul>
+  <li>Makers hold their own balances in the contract and sign their own quotes. The protocol
+      matches and settles; it never takes a side.</li>
+  <li>Writing an option <b>reserves the side that maker may owe</b>, so no position can open that
+      its counterparty could not honour at expiry.</li>
+  <li>A quote names its maker and is checked against <b>that maker's</b> key, so one maker's
+      signer can never commit another's inventory.</li>
+  <li>A request for quote asks every registered maker at once, holds a short window open and
+      returns the best bid. A maker that misses the window is skipped rather than closing the market.</li>
+</ul>
+
+<h2>Deployed contracts · GIWA Sepolia</h2>
+<table>
+  <tr><td class="k">WritOptions</td><td class="mono">0xd2f64c2fd06AA6B8c295d7C37CE6459D89B4f7B0</td></tr>
+  <tr><td class="k">PythAdapter</td><td class="mono">0x484E61922DDc7E8f23586fC3B37a6206fcA8DCC6</td></tr>
+  <tr><td class="k">TestUSDC</td><td class="mono">0x0b76264Bb1eD80e5FB219828464d0C809567e309</td></tr>
+  <tr><td class="k">TestBTC</td><td class="mono">0xD23c5fA0f4029874be6338fdaDC66e81709DAbFf</td></tr>
+  <tr><td class="k">Pyth</td><td class="mono">0x2880aB155794e7179c9eE2e38200202908C17B43</td></tr>
+</table>
+<ul>
+  <li>All four of our contracts are <b>verified with source</b> on sepolia-explorer.giwa.io.</li>
+  <li>GIWA has neither a canonical stablecoin nor a wrapped BTC, so both settlement assets are
+      faucet-backed testnet tokens. Every amount and formula carries over unchanged to bridged
+      assets on mainnet.</li>
+</ul>
+
+<h2>Properties enforced by the contract</h2>
+<ul>
+  <li><b>Solvency, per asset.</b> Each token balance always equals
+      <span class="mono">makerFree + makerReserved + writerCollateral</span>. Both are fuzz-tested.</li>
+  <li><b>Delivery is pre-funded.</b> A position cannot be opened unless its counterparty already
+      holds what it might owe, so assignment can never fail for lack of inventory.</li>
+  <li><b>A quote signer cannot move funds.</b> It only sets premiums on its own maker's quotes.</li>
+  <li><b>Reserves are unreachable.</b> A maker may withdraw only its uncommitted balance.</li>
+  <li><b>Settlement cannot be timed.</b>
+      <span class="mono">parsePriceFeedUpdatesUnique</span> pins the first tick after expiry, with
+      confidence-interval and exponent guards.</li>
+  <li><b>The oracle sits behind an adapter.</b>
+      <span class="mono">IOracleAdapter</span> lets a second feed drop in without touching the core.</li>
+</ul>
+
+<div class="band">
+  <div class="lbl">WHY GIWA</div>
+  <h3>The same desk returns more premium on GIWA.</h3>
+  <p>Writ runs on signed quotes. That design has exactly two weaknesses, and GIWA removes both at
+     the architecture level rather than by convention.</p>
+  <p><b>Preconfirmation.</b> A quote must survive until the writer's transaction lands. The longer
+     it lives, the more stale-price risk the maker prices into the spread. Flashblocks preconfirm in
+     roughly 200 ms, so our quotes live <b>20 seconds instead of 60</b>: about three times less
+     stale risk, and correspondingly more premium kept by the writer.</p>
+  <p><b>Private orderflow.</b> There is no public mempool. Only the sequencer sees pending
+     transactions, so <b>a signed quote cannot be observed and traded against before it lands</b>.</p>
+</div>
+
+<h2>Live on-chain proof</h2>
+<table>
+  <tr><th>Metric</th><th>Value</th></tr>
+  <tr><td class="k">Tests passing</td><td>49, including a solvency fuzz test per collateral asset</td></tr>
+  <tr><td class="k">Maker funded</td><td class="mono">2,000.000000 USDC · 1.00000000 BTC</td></tr>
+  <tr><td class="k">First position</td><td>Put, strike $74,000, size 0.001 BTC, 3-day expiry</td></tr>
+  <tr><td class="k">Collateral locked</td><td class="mono">74.000000 USDC</td></tr>
+  <tr><td class="k">Premium paid upfront</td><td class="mono">0.473958 USDC</td></tr>
+  <tr><td class="k">Delivery reserved</td><td class="mono">0.00100000 BTC, held against assignment</td></tr>
+</table>
+<p>Both invariants hold exactly on-chain:
+<span class="mono">1,873.526042 = 1,799.526042 + 0 + 74.000000</span> and
+<span class="mono">1.00000000 = 0.99900000 + 0.00100000 + 0</span>.</p>
+
+<h2>Execution plan</h2>
+<table>
+  <tr><td class="k">Now</td><td>MVP live on GIWA Sepolia: two products, physical settlement, maker
+      accounts, request for quote, public faucets and the first live position.</td></tr>
+  <tr><td class="k">Phase 2</td><td>External makers onboarded against the published quote API;
+      RedStone as a second oracle behind the same adapter.</td></tr>
+  <tr><td class="k">Phase 3</td><td>Bridged USDC and wrapped BTC settlement, permissionless keeper
+      settlement, mainnet readiness.</td></tr>
+  <tr><td class="k">Phase 4</td><td>KRW-denominated strikes when a KRW stablecoin lands on GIWA.</td></tr>
+</table>
+
+<h2>Counterparty model and honest status</h2>
+<p>Counterparties are market makers, not the protocol and not other users. Premiums are paid from a
+maker's own on-chain balance, and the contract refuses a trade that maker could not deliver on. At
+expiry only that position's own collateral and reserve move. Writer collateral is never pooled with
+another writer's.</p>
+<p>On testnet the maker is operated by the team, which is stated plainly rather than dressed up as
+liquidity. The architecture is the multi-maker one either way: registering a second maker is three
+calls, and the request-for-quote flow already selects the best bid among however many answer.</p>
+<p><b>Status: testnet, unaudited, mainnet pending GIWA mainnet.</b></p>
+
+</body>
+</html>

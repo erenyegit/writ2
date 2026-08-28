@@ -55,7 +55,13 @@ export const deskConfig = {
   btcFeedId:
     process.env.BTC_USD_FEED_ID ??
     "0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43",
-  hermesUrl: process.env.HERMES_URL ?? "https://hermes.pyth.network",
+  /**
+   * Pyth moved Hermes behind an API key on 26 August 2026 and the old public
+   * host now answers 401. Routes and response shapes are unchanged, so this is
+   * a base-url swap plus a bearer token.
+   */
+  hermesUrl: process.env.HERMES_URL ?? "https://pyth.dourolabs.app/hermes",
+  pythApiKey: process.env.PYTH_API_KEY ?? "",
   /** Desk buys below fair value by at least this fraction (see surface.ts). */
   spread: Number(process.env.DESK_SPREAD ?? 0.1),
   riskFreeRate: Number(process.env.RISK_FREE ?? 0),
@@ -72,3 +78,9 @@ export const deskConfig = {
   /** Warn when free maker liquidity drops below this (USDC, 1e6). */
   lowLiquidityUsdc: BigInt(process.env.LOW_LIQUIDITY_USDC ?? 100_000_000),
 };
+
+/** Auth for Hermes. Server-side only: a key the browser can read is public. */
+export function hermesHeaders(): Record<string, string> {
+  const key = deskConfig.pythApiKey;
+  return key ? { Authorization: `Bearer ${key}` } : {};
+}
