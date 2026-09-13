@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { fetchSpot } from "@/lib/desk/hermes";
+import { fetchSpot } from "@/lib/desk/price";
 import { buildSignedQuote } from "@/lib/desk/quote";
 
 export const dynamic = "force-dynamic";

@@ -7,6 +7,8 @@ export interface AprRange {
 
 export interface Market {
   spotUsd: number;
+  /** Which provider answered: "pyth", "coinbase" or "kraken". */
+  spotSource: string;
   ivAnnualized: number;
   strikes: number[];
   expiries: number[];

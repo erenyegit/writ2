@@ -26,7 +26,16 @@ const EXPIRY_DAYS = [1, 3, 7] as const;
 const roundStep = (x: number) => Math.round(x / STEP) * STEP;
 const clampPct = (p: number) => Math.min(96, Math.max(4, p));
 
-export function HeroPreview({ spot }: { spot: number | null }) {
+export function HeroPreview({
+  spot,
+  source,
+  unavailable = false,
+}: {
+  spot: number | null;
+  source?: string | null;
+  /** Every price source failed and there is no last good price to show. */
+  unavailable?: boolean;
+}) {
   const [tab, setTab] = useState<Tab>("put");
   const [days, setDays] = useState<(typeof EXPIRY_DAYS)[number]>(7);
   const [putStrike, setPutStrike] = useState<number | null>(null);
@@ -76,9 +85,18 @@ export function HeroPreview({ spot }: { spot: number | null }) {
       {/* ------------------------------------------------ meta row */}
       <div className="flex items-center justify-between">
         <span className="micro">indicative preview</span>
-        <span className="num text-[13px] font-semibold text-char" title="price source: pyth">
+        <span
+          className="num text-[13px] font-semibold text-char"
+          title={source ? `price source: ${source}` : undefined}
+        >
           <span className="micro mr-2">btc / usd</span>
-          {spot ? fmtUsd(spot, 0) : <span className="text-steel-500">loading…</span>}
+          {spot ? (
+            fmtUsd(spot, 0)
+          ) : unavailable ? (
+            <span className="text-steel-500">unavailable</span>
+          ) : (
+            <span className="text-steel-500">loading…</span>
+          )}
         </span>
       </div>
 
@@ -144,7 +162,7 @@ export function HeroPreview({ spot }: { spot: number | null }) {
       <div className="mt-6">
         {!ready ? (
           <div className="flex h-[96px] items-center justify-center rounded-lg border border-hairline text-[12px] text-steel-500">
-            loading price…
+            {unavailable ? "price feed unreachable — retrying every 20s" : "loading price…"}
           </div>
         ) : tab === "put" ? (
           <PutBar

@@ -43,10 +43,20 @@ const faq: [string, string][] = [
 
 export default function EarnPage() {
   const [market, setMarket] = useState<Market | null>(null);
+  const [priceDown, setPriceDown] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    const load = () => getMarket().then((m) => alive && setMarket(m)).catch(() => {});
+    // A failed load used to be swallowed, which left the hero waiting on a price
+    // that was never coming. Keep polling, but let the page say so.
+    const load = () =>
+      getMarket()
+        .then((m) => {
+          if (!alive) return;
+          setMarket(m);
+          setPriceDown(false);
+        })
+        .catch(() => alive && setPriceDown(true));
     load();
     const t = setInterval(load, 20_000);
     return () => {
@@ -98,7 +108,11 @@ export default function EarnPage() {
           </div>
 
           <div className="bg-ink-850/60 p-6 sm:p-8">
-            <HeroPreview spot={market?.spotUsd ?? null} />
+            <HeroPreview
+              spot={market?.spotUsd ?? null}
+              source={market?.spotSource ?? null}
+              unavailable={priceDown && !market}
+            />
           </div>
         </div>
       </section>

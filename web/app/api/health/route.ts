@@ -4,6 +4,7 @@ import { createPublicClient, http } from "viem";
 import { coreAbi } from "@/lib/abi";
 import { giwaSepolia } from "@/lib/chain";
 import { deskConfig, usingDevKey } from "@/lib/desk/config";
+import { getSpot, pythSpotError } from "@/lib/desk/price";
 import { quoterAddress } from "@/lib/desk/quote";
 
 export const dynamic = "force-dynamic";
@@ -13,8 +14,16 @@ export const dynamic = "force-dynamic";
  * that cannot be trusted, and a balance too thin to pay the next premium.
  */
 export async function GET() {
+  // Price first: if every source is down, that is the headline.
+  const price = await getSpot()
+    .then((s) => ({ priceSource: s.source, spotUsd: Math.round(s.usd) }))
+    .catch((e: Error) => ({ priceSource: null, priceError: e.message }));
+
   const base = {
     ok: true,
+    ...price,
+    /** Settlement data still needs Pyth; a non-null value here means it is broken. */
+    pythError: pythSpotError(),
     chainId: deskConfig.chainId,
     core: deskConfig.coreAddress,
     maker: deskConfig.makerAddress,

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { bsCall, bsPut } from "@/lib/desk/bs";
 import { atmVol, deskSpread, impliedVol } from "@/lib/desk/surface";
-import { fetchSpot } from "@/lib/desk/hermes";
+import { getSpot } from "@/lib/desk/price";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,7 @@ const REF_TENOR_SEC = 7 * 86400;
 /** Market snapshot: spot, IV, a strike ladder, and the next daily expiries. */
 export async function GET() {
   try {
-    const spot = await fetchSpot();
+    const { usd: spot, source: spotSource } = await getSpot();
 
     const strikes: number[] = [];
     for (let i = -4; i <= 4; i++) {
@@ -64,6 +64,7 @@ export async function GET() {
 
     return NextResponse.json({
       spotUsd: spot,
+      spotSource,
       ivAnnualized: atmVol(nearestTenorYears),
       strikes,
       expiries,
