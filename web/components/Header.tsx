@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 
 import { giwaSepolia } from "@/lib/chain";
+import { LogoMark } from "@/components/Logo";
 import { shortAddr } from "@/lib/format";
 
 const nav = [
@@ -45,8 +46,11 @@ export function Header() {
     <header className="sticky top-0 z-20 border-b border-inkline bg-ink-900/95 backdrop-blur">
       <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-4">
         <div className="flex items-center gap-10">
-          <Link href="/" className="font-display text-[22px] font-bold tracking-tight text-char">
-            writ<span className="text-amber">_</span>
+          <Link href="/" className="flex items-center gap-2.5" aria-label="Writ Fi home">
+            <LogoMark size={30} />
+            <span className="font-display text-[20px] font-bold tracking-tight text-char">
+              Writ Fi
+            </span>
           </Link>
           <nav className="hidden items-center gap-1.5 sm:flex">
             {nav.map((n) => (

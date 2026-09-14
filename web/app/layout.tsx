@@ -24,7 +24,7 @@ const sans = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Writ — Earn upfront premium, on GIWA",
+  title: "Writ Fi — Earn upfront premium, on GIWA",
   description:
     "Sell cash-settled BTC options and receive the premium instantly. Fully collateralized, loss capped at posted collateral, oracle-settled, built on GIWA.",
 };
