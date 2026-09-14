@@ -49,7 +49,7 @@ export function Header() {
           <Link href="/" className="flex items-center gap-2.5" aria-label="Writ Fi home">
             <LogoMark size={30} />
             <span className="font-display text-[20px] font-bold tracking-tight text-char">
-              Writ Fi
+              Writ
             </span>
           </Link>
           <nav className="hidden items-center gap-1.5 sm:flex">
