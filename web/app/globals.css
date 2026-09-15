@@ -177,3 +177,567 @@ summary::-webkit-details-marker {
 .hero-range:focus-visible::-moz-range-thumb {
   box-shadow: 0 0 0 3px rgba(61, 94, 224, 0.45);
 }
+
+/* ---------------------------------------------------------------- coming soon */
+
+/* Every element's resting style is its final frame; intro animations run with
+   fill-mode "both", so switching them off (reduced motion) leaves the finished
+   page. The loops only move transforms and opacity, so they stay on the
+   compositor; the one filter animation is the short intro focus. */
+
+.cs-stage {
+  @apply relative isolate flex items-center justify-center overflow-hidden;
+  min-height: 100vh;
+  min-height: 100svh;
+  padding-block: 64px;
+  background-color: #05081a;
+  background-image:
+    radial-gradient(70% 55% at 50% 0%, rgba(74, 98, 214, 0.2), rgba(74, 98, 214, 0) 70%),
+    radial-gradient(130% 100% at 50% 50%, rgba(5, 8, 26, 0) 40%, #020309 100%);
+}
+
+/* film grain, rasterized once */
+.cs-stage::after {
+  content: "";
+  @apply pointer-events-none absolute inset-0;
+  z-index: 20;
+  opacity: 0.07;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.55 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ---- the mark */
+
+.cs-w {
+  @apply relative;
+  width: clamp(180px, 50vw, 300px);
+  aspect-ratio: 304 / 200;
+  animation: cs-focus 1.6s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+}
+
+.cs-w-glow {
+  @apply pointer-events-none absolute;
+  inset: -70% -45%;
+  background: radial-gradient(closest-side, rgba(86, 116, 255, 0.3), rgba(86, 116, 255, 0));
+  animation:
+    cs-fade 2.2s ease-out 0.8s both,
+    cs-glow 9s ease-in-out 3s infinite alternate;
+}
+
+.cs-w-half {
+  @apply absolute inset-0 overflow-hidden;
+  -webkit-mask-image: var(--mask);
+  mask-image: var(--mask);
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  background: linear-gradient(155deg, #d7defe 0%, #97a9f8 48%, #5a70e2 100%);
+}
+
+.cs-w-left {
+  animation: cs-join-left 1.6s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+}
+
+.cs-w-right {
+  animation: cs-join-right 1.6s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+}
+
+/* Light moving inside the letterform: soft fields of white, deep blue and
+   violet drifting on unrelated periods (9s, 13s, 19s, 15s), so the surface keeps
+   changing without a visible loop. Both halves carry identical layers in the
+   same box, so the light reads as one continuous surface across the cut. */
+.cs-liquid {
+  @apply absolute;
+  inset: -50%;
+}
+
+.cs-liquid-blob {
+  @apply absolute rounded-full;
+  will-change: transform;
+}
+
+.cs-liquid-a {
+  left: 8%;
+  top: 14%;
+  width: 46%;
+  height: 58%;
+  background: radial-gradient(closest-side, #fff 0%, rgba(255, 255, 255, 0.85) 35%, rgba(255, 255, 255, 0));
+  animation: cs-liquid-a 9s ease-in-out infinite alternate;
+}
+
+.cs-liquid-b {
+  left: 46%;
+  top: 34%;
+  width: 50%;
+  height: 60%;
+  background: radial-gradient(closest-side, rgba(34, 56, 182, 0.95), rgba(34, 56, 182, 0));
+  animation: cs-liquid-b 13s ease-in-out infinite alternate;
+}
+
+.cs-liquid-spin {
+  @apply absolute inset-0;
+  will-change: transform;
+  animation: cs-spin 19s linear infinite;
+}
+
+.cs-liquid-c {
+  left: 50%;
+  top: 22%;
+  width: 36%;
+  height: 44%;
+  background: radial-gradient(closest-side, rgba(146, 108, 255, 0.85), rgba(146, 108, 255, 0));
+}
+
+.cs-liquid-d {
+  left: 30%;
+  top: 44%;
+  width: 34%;
+  height: 40%;
+  background: radial-gradient(closest-side, rgba(236, 242, 255, 0.9), rgba(236, 242, 255, 0));
+  animation: cs-liquid-d 15s ease-in-out infinite alternate;
+}
+
+/* the cut between the halves: a flash when they meet, then a glint every 8s */
+.cs-seam {
+  @apply pointer-events-none absolute overflow-hidden;
+  left: calc(50.08% - 1px);
+  top: 8.5%;
+  width: 2px;
+  height: 65.5%;
+}
+
+.cs-seam-flash {
+  @apply absolute inset-0;
+  opacity: 0;
+  transform-origin: 50% 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0), #fff 25%, #fff 75%, rgba(255, 255, 255, 0));
+  animation: cs-seam-flash 1.2s cubic-bezier(0.16, 1, 0.3, 1) 0.95s both;
+}
+
+.cs-seam-glint {
+  @apply absolute inset-x-0 top-0;
+  height: 24%;
+  box-shadow: 0 0 6px 1px rgba(190, 205, 255, 0.9);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0), #fff 50%, rgba(255, 255, 255, 0));
+  transform: translate3d(0, -100%, 0);
+  animation: cs-seam-glint 8s cubic-bezier(0.45, 0, 0.2, 1) 3.2s infinite;
+}
+
+/* ---- type */
+
+.cs-headline {
+  @apply font-display font-medium;
+  margin-top: clamp(40px, 8vw, 60px);
+  font-size: clamp(40px, 10vw, 68px);
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+}
+
+/* typed headline: an invisible copy holds the width, the live text types over it */
+.cs-type {
+  @apply relative inline-block;
+  white-space: pre;
+}
+
+.cs-type-sizer {
+  visibility: hidden;
+}
+
+.cs-type-live {
+  @apply absolute left-0 top-0;
+  white-space: pre;
+}
+
+.cs-type-text {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  background: linear-gradient(180deg, #ffffff 10%, #b9c5f1 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+.cs-caret {
+  display: inline-block;
+  width: max(3px, 0.05em);
+  height: 0.84em;
+  margin-left: 0.05em;
+  vertical-align: -0.04em;
+  border-radius: 2px;
+  background: #8fa5ff;
+  box-shadow: 0 0 14px rgba(120, 146, 255, 0.85);
+  animation: cs-fade 0.6s ease-out 0.9s both;
+}
+
+.cs-caret[data-idle="true"] {
+  animation:
+    cs-fade 0.6s ease-out 0.9s both,
+    cs-caret 1.1s ease-in-out 0.35s infinite;
+}
+
+.cs-domain {
+  @apply font-display font-medium;
+  margin-top: clamp(18px, 4vw, 26px);
+  font-size: clamp(16px, 4.2vw, 19px);
+  letter-spacing: 0.01em;
+  color: rgba(222, 229, 250, 0.82);
+  animation: cs-rise-in 1.2s cubic-bezier(0.16, 1, 0.3, 1) 1.55s both;
+}
+
+.cs-domain span {
+  color: #8fa5ff;
+}
+
+/* bottom row: X link on the left, GASOK card on the right, centered on one axis */
+.cs-dock {
+  @apply pointer-events-none fixed z-30 flex items-center;
+  left: 16px;
+  right: 16px;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  gap: 10px;
+}
+
+@media (min-width: 640px) {
+  .cs-dock {
+    left: 24px;
+    right: 24px;
+    bottom: 24px;
+    justify-content: space-between;
+  }
+}
+
+/* The entrance runs on the wrapper, so the hover lift on the link is not held
+   back by the animation's fill. */
+.cs-social {
+  @apply pointer-events-auto shrink-0;
+  animation: cs-proof-in 1.1s cubic-bezier(0.16, 1, 0.3, 1) 2.3s both;
+}
+
+.cs-social-link {
+  @apply grid place-items-center rounded-full;
+  width: 44px;
+  height: 44px;
+  color: rgba(214, 222, 248, 0.78);
+  border: 1px solid rgba(170, 188, 255, 0.2);
+  background: rgba(10, 14, 34, 0.6);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  transition:
+    color 0.3s ease,
+    border-color 0.3s ease,
+    background-color 0.3s ease,
+    transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.cs-social-link:hover {
+  color: #fff;
+  border-color: rgba(170, 188, 255, 0.42);
+  background-color: rgba(16, 22, 52, 0.8);
+  transform: translate3d(0, -2px, 0);
+}
+
+.cs-social-link:focus-visible {
+  outline: 2px solid #8fa5ff;
+  outline-offset: 3px;
+}
+
+.cs-social-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---- GASOK card */
+
+.cs-proof {
+  @apply pointer-events-auto min-w-0 flex-1;
+  animation: cs-proof-in 1.1s cubic-bezier(0.16, 1, 0.3, 1) 2.3s both;
+}
+
+@media (min-width: 640px) {
+  .cs-proof {
+    flex: 0 0 360px;
+  }
+}
+
+.cs-proof-card {
+  @apply flex w-full items-center text-left;
+  gap: 14px;
+  padding: 10px 14px 10px 10px;
+  border-radius: 16px;
+  border: 1px solid rgba(160, 178, 255, 0.14);
+  background: rgba(10, 14, 34, 0.72);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.9);
+  transition:
+    border-color 0.3s ease,
+    background-color 0.3s ease,
+    transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.cs-proof-card:hover {
+  border-color: rgba(160, 178, 255, 0.3);
+  background-color: rgba(16, 22, 52, 0.8);
+  transform: translate3d(0, -2px, 0);
+}
+
+.cs-proof-card:focus-visible {
+  outline: 2px solid #8fa5ff;
+  outline-offset: 3px;
+}
+
+.cs-proof-thumb {
+  @apply block shrink-0 overflow-hidden;
+  width: 96px;
+  aspect-ratio: 2000 / 1493;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.cs-proof-thumb img {
+  @apply block h-full w-full object-cover;
+}
+
+.cs-proof-copy {
+  @apply flex min-w-0 flex-1 flex-col;
+  gap: 3px;
+}
+
+.cs-proof-title {
+  @apply font-display font-medium;
+  font-size: 14.5px;
+  line-height: 1.25;
+  color: #eef1fb;
+  text-wrap: balance;
+}
+
+.cs-proof-sub {
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: rgba(190, 200, 235, 0.68);
+}
+
+.cs-proof-icon {
+  @apply shrink-0;
+  width: 14px;
+  height: 14px;
+  color: rgba(190, 200, 235, 0.55);
+  transition: color 0.3s ease;
+}
+
+.cs-proof-card:hover .cs-proof-icon {
+  color: #fff;
+}
+
+.cs-proof-dialog {
+  @apply m-auto p-0;
+  width: min(1040px, 94vw);
+  max-width: none;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.cs-proof-dialog[open] {
+  animation: cs-dialog-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.cs-proof-dialog::backdrop {
+  background: rgba(3, 5, 14, 0.8);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.cs-proof-figure {
+  margin: 0;
+}
+
+.cs-proof-figure img {
+  @apply block h-auto w-full;
+  max-height: 80vh;
+  object-fit: contain;
+  border-radius: 14px;
+  box-shadow: 0 40px 100px -30px rgba(0, 0, 0, 0.9);
+}
+
+.cs-proof-figure figcaption {
+  margin-top: 14px;
+  text-align: center;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: rgba(214, 222, 248, 0.78);
+}
+
+.cs-proof-figure figcaption a {
+  color: #aebdff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(174, 189, 255, 0.4);
+}
+
+.cs-proof-close {
+  @apply absolute grid place-items-center rounded-full;
+  top: -14px;
+  right: -14px;
+  width: 36px;
+  height: 36px;
+  color: #eef1fb;
+  background: rgba(16, 22, 52, 0.95);
+  border: 1px solid rgba(160, 178, 255, 0.25);
+}
+
+.cs-proof-close svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (max-width: 639px) {
+  .cs-stage {
+    padding-bottom: 132px; /* keep the centered content clear of the card */
+  }
+
+  .cs-proof-card {
+    gap: 12px;
+  }
+
+  .cs-proof-thumb {
+    width: 64px;
+  }
+
+  .cs-proof-icon {
+    display: none;
+  }
+
+  .cs-proof-close {
+    top: -46px;
+    right: 0;
+  }
+}
+
+/* ---- keyframes */
+
+@keyframes cs-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes cs-focus {
+  from {
+    opacity: 0;
+    filter: blur(14px);
+  }
+}
+
+@keyframes cs-join-left {
+  from {
+    transform: translate3d(-16%, 0, 0);
+  }
+}
+
+@keyframes cs-join-right {
+  from {
+    transform: translate3d(16%, 0, 0);
+  }
+}
+
+@keyframes cs-seam-flash {
+  0% {
+    opacity: 1;
+    transform: scaleY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scaleY(1);
+  }
+}
+
+@keyframes cs-seam-glint {
+  0% {
+    transform: translate3d(0, -100%, 0);
+  }
+  22%,
+  100% {
+    transform: translate3d(0, 300%, 0);
+  }
+}
+
+@keyframes cs-liquid-a {
+  to {
+    transform: translate3d(92%, 38%, 0) scale(1.25);
+  }
+}
+
+@keyframes cs-liquid-b {
+  to {
+    transform: translate3d(-78%, -40%, 0) scale(1.2);
+  }
+}
+
+@keyframes cs-liquid-d {
+  to {
+    transform: translate3d(70%, -60%, 0) scale(0.8);
+  }
+}
+
+@keyframes cs-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes cs-glow {
+  to {
+    opacity: 0.55;
+  }
+}
+
+@keyframes cs-caret {
+  50% {
+    opacity: 0.12;
+  }
+}
+
+@keyframes cs-proof-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+  }
+}
+
+@keyframes cs-dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+@keyframes cs-rise-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cs-stage,
+  .cs-stage *,
+  .cs-stage *::before,
+  .cs-stage *::after,
+  .cs-proof-dialog[open] {
+    animation: none !important;
+  }
+
+  .cs-proof-card,
+  .cs-social-link {
+    transition: none;
+  }
+
+  .cs-proof-card:hover,
+  .cs-social-link:hover {
+    transform: none;
+  }
+}

@@ -1,41 +1,14 @@
 import Link from "next/link";
 
+import { MailIcon, XIcon } from "@/components/Icons";
 import { LogoMark } from "@/components/Logo";
-
-const EMAIL = "contact@writ.fi";
-const X_HANDLE = "writ_fi";
+import { CONTACT_EMAIL, X_HANDLE, X_URL } from "@/lib/site";
 
 const product = [
   { href: "/", label: "Earn" },
   { href: "/trade", label: "Trade" },
   { href: "/positions", label: "Positions" },
 ];
-
-function MailIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.7}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <rect x="3" y="5" width="18" height="14" rx="2.5" />
-      <path d="m4 7.5 8 5.5 8-5.5" />
-    </svg>
-  );
-}
-
-function XIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
-      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-    </svg>
-  );
-}
 
 const linkClass = "text-[13px] text-steel-400 transition hover:text-char";
 
@@ -73,14 +46,14 @@ export function Footer() {
             <div className="micro mb-4">Contact</div>
             <ul className="space-y-3">
               <li>
-                <a href={`mailto:${EMAIL}`} className={`group inline-flex items-center gap-2.5 ${linkClass}`}>
+                <a href={`mailto:${CONTACT_EMAIL}`} className={`group inline-flex items-center gap-2.5 ${linkClass}`}>
                   <MailIcon className="h-4 w-4 text-steel-500 transition group-hover:text-char" />
-                  {EMAIL}
+                  {CONTACT_EMAIL}
                 </a>
               </li>
               <li>
                 <a
-                  href={`https://x.com/${X_HANDLE}`}
+                  href={X_URL}
                   target="_blank"
                   rel="noopener noreferrer"
                   className={`group inline-flex items-center gap-2.5 ${linkClass}`}
