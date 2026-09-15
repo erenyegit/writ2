@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, Inter, Space_Grotesk } from "next/font/google";
 
+import { Footer } from "@/components/Footer";
 import { Header } from "@/components/Header";
 
 import { Providers } from "./providers";
@@ -36,12 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Providers>
           <Header />
           <main className="mx-auto w-full max-w-6xl px-4 pb-24">{children}</main>
-          <footer className="border-t border-hairline py-5">
-            <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-2 px-4">
-              <span className="micro">writ · options desk on giwa</span>
-              <span className="micro">testnet · unaudited mvp · not investment advice</span>
-            </div>
-          </footer>
+          <Footer />
         </Providers>
       </body>
     </html>

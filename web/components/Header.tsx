@@ -47,8 +47,8 @@ export function Header() {
       <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-4">
         <div className="flex items-center gap-10">
           <Link href="/" className="flex items-center gap-2.5" aria-label="Writ Fi home">
-            <LogoMark size={30} />
-            <span className="font-display text-[20px] font-bold tracking-tight text-char">
+            <LogoMark size={36} />
+            <span className="font-display text-[22px] font-bold tracking-tight text-char">
               Writ
             </span>
           </Link>
