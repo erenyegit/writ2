@@ -217,7 +217,7 @@ What we need most, in order:
 
 ## Slide 14 — Links
 
-- **Live demo:** https://writ2.vercel.app
+- **Live demo:** https://www.writ.fi
 - **Code:** github.com/erenyegit/writ2
 - **Explorer:** sepolia-explorer.giwa.io/address/0xd2f64c2fd06AA6B8c295d7C37CE6459D89B4f7B0
 - **Network:** GIWA Sepolia · chain 91342
